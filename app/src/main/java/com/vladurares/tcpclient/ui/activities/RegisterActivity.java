@@ -1,12 +1,11 @@
 package com.vladurares.tcpclient.ui.activities;
 
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.util.Log;
+import android.util.Patterns;
 import android.view.View;
-import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.Toast;
 
@@ -16,27 +15,20 @@ import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
-import com.vladurares.tcpclient.utils.ClientKeyManager;
 import com.vladurares.tcpclient.utils.ConfigReader;
 import com.vladurares.tcpclient.R;
-import com.vladurares.tcpclient.storage.SecureStorage;
 import com.vladurares.tcpclient.network.TcpConnection;
 import com.google.android.material.snackbar.Snackbar;
 import com.google.gson.Gson;
-import com.google.gson.JsonElement;
 
-import java.security.KeyPair;
 
-import chat.models.User;
 import chat.network.ChatDtos;
 import chat.network.NetworkPacket;
 import chat.network.PacketType;
-import chat.security.CryptoHelper;
 
 
 public class RegisterActivity extends AppCompatActivity {
     private ConfigReader config;
-    private SharedPreferences preferences;
     private final Gson gson = new Gson();
     private static final String TAG = "RegisterActivity";
 
@@ -54,26 +46,26 @@ public class RegisterActivity extends AppCompatActivity {
 
         config = new ConfigReader(this);
 
-        try {
-            preferences = SecureStorage.getEncryptedPrefs(getApplicationContext());
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to load encrypted preferences, falling back to standard", e);
-            preferences = getSharedPreferences("ChatPrefs", MODE_PRIVATE);
-        }
     }
 
     public void handleAccount(View view) {
         EditText usernameField = findViewById(R.id.editTextText);
+        EditText emailField = findViewById(R.id.editTextEmail);
         EditText passwordField = findViewById(R.id.editTextTextPassword2);
         EditText confirmedPasswordField = findViewById(R.id.editTextTextPassword3);
-        CheckBox checkBox = findViewById(R.id.checkBoxKeepSignedInRegister);
 
         String username = usernameField.getText().toString().trim();
+        String email = emailField.getText().toString().trim();
         String password = passwordField.getText().toString().trim();
         String confirmedPassword = confirmedPasswordField.getText().toString().trim();
 
         if (username.isEmpty() || password.isEmpty() || confirmedPassword.isEmpty()) {
             Toast.makeText(this, "Please fill in all fields!", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        if (email.isEmpty() || !Patterns.EMAIL_ADDRESS.matcher(email).matches()) {
+            Toast.makeText(this, "Please enter a valid email", Toast.LENGTH_SHORT).show();
             return;
         }
 
@@ -91,7 +83,7 @@ public class RegisterActivity extends AppCompatActivity {
 
                 TcpConnection.connect(config.getServerIp(), config.getServerPort());
 
-                ChatDtos.AuthDto registerData = new ChatDtos.AuthDto(username, password);
+                ChatDtos.AuthDto registerData = new ChatDtos.AuthDto(username, email, password);
                 NetworkPacket request = new NetworkPacket(PacketType.REGISTER_REQUEST, 0, registerData);
 
                 TcpConnection.sendPacket(request);
@@ -102,7 +94,7 @@ public class RegisterActivity extends AppCompatActivity {
                     view.setEnabled(true);
 
                     if (responsePacket != null && responsePacket.getType() == PacketType.REGISTER_RESPONSE) {
-                        handleRegisterResponse(responsePacket, username, password, checkBox.isChecked());
+                        handleRegisterResponse(responsePacket, email);
                     } else {
                         showSnackbar("Server Error: Invalid response.");
                     }
@@ -119,77 +111,29 @@ public class RegisterActivity extends AppCompatActivity {
         }).start();
     }
 
-    private void handleRegisterResponse(NetworkPacket packet, String userStr, String passStr, boolean save) {
-        try {
-            JsonElement payload = packet.getPayload();
+    private void handleRegisterResponse(NetworkPacket packet, String email) {
+        String response = gson.fromJson(packet.getPayload(), String.class);
 
-            if (payload.isJsonObject()) {
-                User user = gson.fromJson(payload, User.class);
+        switch (response) {
+            case "CHECK_EMAIL":
+                Toast.makeText(this, "Verifică emailul pentru cod!", Toast.LENGTH_LONG).show();
+                Intent intent = new Intent(this, ConfirmEmailActivity.class);
+                intent.putExtra("EMAIL", email);
+                startActivity(intent);
+                finish();
+                break;
 
-                if (user != null && user.getUsername() != null) {
-                    TcpConnection.setCurrentUserId(user.getId());
+            case "EXISTS":
+                showSnackbar("Un cont cu acest email există deja.");
+                break;
 
-                    SharedPreferences.Editor editor = preferences.edit();
-                    if (save) {
-                        editor.putString("username", userStr);
-                        editor.putString("password", passStr);
-                    } else {
-                        editor.remove("username");
-                        editor.remove("password");
-                    }
-                    editor.apply();
+            case "FAIL":
+                showSnackbar("Eroare la înregistrare. Încearcă din nou.");
+                break;
 
-                    Toast.makeText(this, "Account created successfully!", Toast.LENGTH_SHORT).show();
-
-                    new Thread(() -> {
-                        try {
-                            ClientKeyManager clientKeyManager = new ClientKeyManager(this, TcpConnection.getCurrentUserId());
-
-                            KeyPair identityKP = CryptoHelper.generateDilithiumKeys();
-                            KeyPair preKeyKP = CryptoHelper.generateKyberKeys();
-
-                            String ikPub = android.util.Base64.encodeToString(identityKP.getPublic().getEncoded(), android.util.Base64.NO_WRAP);
-                            String ikPriv = android.util.Base64.encodeToString(identityKP.getPrivate().getEncoded(), android.util.Base64.NO_WRAP);
-
-                            String spkPub = android.util.Base64.encodeToString(preKeyKP.getPublic().getEncoded(), android.util.Base64.NO_WRAP);
-                            String spkPriv = android.util.Base64.encodeToString(preKeyKP.getPrivate().getEncoded(), android.util.Base64.NO_WRAP);
-
-                            byte[] signatureBytes = CryptoHelper.signData(
-                                    identityKP.getPrivate(),
-                                    preKeyKP.getPublic().getEncoded()
-                            );
-                            String signatureBase64 = android.util.Base64.encodeToString(signatureBytes, android.util.Base64.NO_WRAP);
-
-                            clientKeyManager.saveMyIdentityKeys(ikPub, ikPriv, spkPub, spkPriv);
-
-                            ChatDtos.PublishKeysDto dto = new ChatDtos.PublishKeysDto(ikPub, spkPub, signatureBase64);
-                            TcpConnection.sendPacket(new NetworkPacket(PacketType.PUBLISH_KEYS, user.getId(), dto));
-
-                            Log.i(TAG, "Keys generated and sent!");
-
-                            runOnUiThread(() -> {
-                                Intent intent = new Intent(RegisterActivity.this, MainActivity.class);
-
-                                startActivity(intent);
-                                finish();
-                            });
-
-                        } catch (Exception e) {
-                            Log.e(TAG, "Critical error generating keys", e);
-                            runOnUiThread(() -> showSnackbar("Critical error generating keys: " + e.getMessage()));
-                        }
-                    }).start();
-                }
-            } else {
-                String errorMsg = gson.fromJson(payload, String.class);
-                showSnackbar(errorMsg);
-
-                ((EditText)findViewById(R.id.editTextTextPassword2)).setText("");
-                ((EditText)findViewById(R.id.editTextTextPassword3)).setText("");
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error processing register response", e);
-            showSnackbar("Error processing server response.");
+            default:
+                showSnackbar(response);
+                break;
         }
     }
 

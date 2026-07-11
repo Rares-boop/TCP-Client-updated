@@ -4,6 +4,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.os.Bundle;
+import android.util.Base64;
 import android.util.Log;
 import android.view.View;
 import android.widget.CheckBox;
@@ -16,6 +17,7 @@ import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
+import com.vladurares.tcpclient.utils.ClientKeyManager;
 import com.vladurares.tcpclient.utils.ConfigReader;
 import com.vladurares.tcpclient.R;
 import com.vladurares.tcpclient.storage.SecureStorage;
@@ -24,10 +26,13 @@ import com.google.android.material.snackbar.Snackbar;
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;
 
+import java.security.KeyPair;
+
 import chat.models.User;
 import chat.network.ChatDtos;
 import chat.network.NetworkPacket;
 import chat.network.PacketType;
+import chat.security.CryptoHelper;
 
 
 public class LoginActivity extends AppCompatActivity {
@@ -57,48 +62,88 @@ public class LoginActivity extends AppCompatActivity {
         }
 
         CheckBox checkBox = findViewById(R.id.checkBoxKeepSignedIn);
-        if (preferences.contains("username")) {
+        String savedEmail = preferences.getString("email", null);
+        String savedPass = preferences.getString("password", null);
+
+        if (savedEmail != null && savedPass != null) {
             checkBox.setChecked(true);
-            checkAutoLogin();
+            doLogin(savedEmail, savedPass, true);
         }
     }
 
     public void handleLogin(View view) {
-        EditText usernameField = findViewById(R.id.textInputEditText);
+        EditText emailField = findViewById(R.id.textInputEditText);
         EditText passwordField = findViewById(R.id.editTextTextPassword);
-        CheckBox checkBox = findViewById(R.id.checkBoxKeepSignedIn);
 
-        String username = usernameField.getText().toString().trim();
+        String email = emailField.getText().toString().trim();
         String password = passwordField.getText().toString().trim();
 
-        if (username.isEmpty() || password.isEmpty()) {
-            Toast.makeText(this, "Please enter username and password", Toast.LENGTH_SHORT).show();
+        if (email.isEmpty() || password.isEmpty()) {
+            Toast.makeText(this, "Please enter email and password", Toast.LENGTH_SHORT).show();
             return;
         }
 
+        CheckBox checkBox = findViewById(R.id.checkBoxKeepSignedIn);
+        doLogin(email, password, checkBox.isChecked());
+    }
+
+    private void doLogin(String email, String password, boolean keepSignedIn) {
         setButtonsEnabled(false);
         Toast.makeText(this, "Connecting...", Toast.LENGTH_SHORT).show();
 
         new Thread(() -> {
             try {
                 TcpConnection.close();
-
                 TcpConnection.connect(config.getServerIp(), config.getServerPort());
 
-                ChatDtos.AuthDto loginData = new ChatDtos.AuthDto(username, password);
-                NetworkPacket requestPacket = new NetworkPacket(PacketType.LOGIN_REQUEST, 0, loginData);
-                TcpConnection.sendPacket(requestPacket);
+                ChatDtos.AuthDto loginData = new ChatDtos.AuthDto(email, password);
+                TcpConnection.sendPacket(new NetworkPacket(PacketType.LOGIN_REQUEST, 0, loginData));
 
-                NetworkPacket responsePacket = TcpConnection.readNextPacket();
+                NetworkPacket response = TcpConnection.readNextPacket();
 
                 runOnUiThread(() -> {
                     setButtonsEnabled(true);
 
-                    if (responsePacket != null && responsePacket.getType() == PacketType.LOGIN_RESPONSE) {
-                        handleLoginResponse(responsePacket, username, password, checkBox.isChecked());
-                    } else {
+                    if (response == null || response.getType() != PacketType.LOGIN_RESPONSE) {
                         showSnackbar("Invalid response from server");
                         TcpConnection.close();
+                        return;
+                    }
+
+                    JsonElement payload = response.getPayload();
+
+                    if (payload.isJsonObject()) {
+                        User user = gson.fromJson(payload, User.class);
+                        TcpConnection.setCurrentUserId(user.getId());
+
+                        SharedPreferences.Editor editor = preferences.edit();
+                        if (keepSignedIn) {
+                            editor.putString("email", email);
+                            editor.putString("password", password);
+                        } else {
+                            editor.remove("email");
+                            editor.remove("password");
+                        }
+                        editor.apply();
+
+                        if (user.getIdentityKey() == null) {
+                            generateAndPublishKeys(user.getId());
+                        }
+
+                        startActivity(new Intent(this, MainActivity.class));
+                        finish();
+
+                    } else {
+                        String error = gson.fromJson(payload, String.class);
+                        TcpConnection.close();
+
+                        if ("NOT_CONFIRMED".equals(error)) {
+                            showSnackbar("Account not confirmed. Check your email.");
+                        } else if ("RATE_LIMITED".equals(error)) {
+                            showSnackbar("Too many attempts. Try again in 15 minutes.");
+                        } else {
+                            showSnackbar("Login failed");
+                        }
                     }
                 });
 
@@ -113,95 +158,36 @@ public class LoginActivity extends AppCompatActivity {
         }).start();
     }
 
-    private void handleLoginResponse(NetworkPacket packet, String username, String password, boolean keepSignedIn) {
-        try {
-            JsonElement payload = packet.getPayload();
-
-            if (payload.isJsonObject()) {
-                User user = gson.fromJson(payload, User.class);
-
-                if (user != null && user.getUsername() != null) {
-                    TcpConnection.setCurrentUserId(user.getId());
-
-                    SharedPreferences.Editor editor = preferences.edit();
-                    if (keepSignedIn) {
-                        editor.putString("username", username);
-                        editor.putString("password", password);
-                    } else {
-                        editor.remove("username");
-                        editor.remove("password");
-                    }
-                    editor.apply();
-
-                    Intent intent = new Intent(LoginActivity.this, MainActivity.class);
-                    startActivity(intent);
-                    finish();
-                }
-            } else {
-                String errorMsg = gson.fromJson(payload, String.class);
-                showSnackbar(errorMsg);
-                TcpConnection.close();
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error processing login response", e);
-            showSnackbar("Login processing error: " + e.getMessage());
-        }
+    public void handleRegister(View view) {
+        startActivity(new Intent(this, RegisterActivity.class));
     }
 
-    private void checkAutoLogin() {
-        String savedUser = preferences.getString("username", null);
-        String savedPass = preferences.getString("password", null);
-
-        if (savedUser == null || savedPass == null) return;
-
-        setButtonsEnabled(false);
-        Toast.makeText(this, "Auto-Login...", Toast.LENGTH_SHORT).show();
-
+    private void generateAndPublishKeys(int userId) {
         new Thread(() -> {
             try {
-                TcpConnection.close();
-                TcpConnection.connect(config.getServerIp(), config.getServerPort());
+                ClientKeyManager keyManager = new ClientKeyManager(this, userId);
 
-                ChatDtos.AuthDto loginData = new ChatDtos.AuthDto(savedUser, savedPass);
-                NetworkPacket request = new NetworkPacket(PacketType.LOGIN_REQUEST, 0, loginData);
-                TcpConnection.sendPacket(request);
+                KeyPair identityKP = CryptoHelper.generateDilithiumKeys();
+                KeyPair preKeyKP = CryptoHelper.generateKyberKeys();
 
-                NetworkPacket response = TcpConnection.readNextPacket();
+                String ikPub = Base64.encodeToString(identityKP.getPublic().getEncoded(), Base64.NO_WRAP);
+                String ikPriv = Base64.encodeToString(identityKP.getPrivate().getEncoded(), Base64.NO_WRAP);
+                String spkPub = Base64.encodeToString(preKeyKP.getPublic().getEncoded(), Base64.NO_WRAP);
+                String spkPriv = Base64.encodeToString(preKeyKP.getPrivate().getEncoded(), Base64.NO_WRAP);
 
-                runOnUiThread(() -> {
-                    if (response != null && response.getType() == PacketType.LOGIN_RESPONSE) {
-                        try {
-                            if (response.getPayload().isJsonObject()) {
-                                User user = gson.fromJson(response.getPayload(), User.class);
-                                TcpConnection.setCurrentUserId(user.getId());
+                byte[] sigBytes = CryptoHelper.signData(identityKP.getPrivate(), preKeyKP.getPublic().getEncoded());
+                String sigB64 = Base64.encodeToString(sigBytes, Base64.NO_WRAP);
 
-                                Intent intent = new Intent(LoginActivity.this, MainActivity.class);
-                                startActivity(intent);
-                                finish();
-                                return;
-                            }
-                        } catch (Exception e) {
-                            Log.e(TAG, "Failed to parse auto-login response", e);
-                        }
-                    }
-                    handleAutoLoginFail();
-                });
+                keyManager.saveMyIdentityKeys(ikPub, ikPriv, spkPub, spkPriv);
+
+                ChatDtos.PublishKeysDto dto = new ChatDtos.PublishKeysDto(ikPub, spkPub, sigB64);
+                TcpConnection.sendPacket(new NetworkPacket(PacketType.PUBLISH_KEYS, userId, dto));
+
+                Log.i(TAG, "Keys generated and published for user " + userId);
             } catch (Exception e) {
-                Log.e(TAG, "Network error during auto-login", e);
-                runOnUiThread(this::handleAutoLoginFail);
+                Log.e(TAG, "Error generating keys", e);
             }
         }).start();
-    }
-
-    private void handleAutoLoginFail() {
-        TcpConnection.close();
-        Toast.makeText(this, "Auto-login failed.", Toast.LENGTH_SHORT).show();
-        setButtonsEnabled(true);
-    }
-
-    public void handleRegister(View view) {
-        Intent newActivity = new Intent(LoginActivity.this, RegisterActivity.class);
-        startActivity(newActivity);
     }
 
     private void setButtonsEnabled(boolean enabled) {
@@ -216,4 +202,5 @@ public class LoginActivity extends AppCompatActivity {
                 .show();
     }
 }
+
 
