@@ -19,3 +19,17 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# Bouncy Castle — crypto nu se obfuscă
+-keep class org.bouncycastle.** { *; }
+-dontwarn org.bouncycastle.**
+
+# Gson — modelele trebuie păstrate pentru serializare
+-keep class chat.models.** { *; }
+-keep class chat.network.** { *; }
+-keep class chat.security.** { *; }
+
+# Gson internals
+-keepattributes Signature
+-keepattributes *Annotation*
+-keep class com.google.gson.** { *; }

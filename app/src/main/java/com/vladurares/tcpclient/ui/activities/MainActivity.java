@@ -23,6 +23,8 @@ import androidx.core.view.WindowInsetsCompat;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.vladurares.tcpclient.network.GlobalPacketHandlers;
+import com.vladurares.tcpclient.network.PacketRouter;
 import com.vladurares.tcpclient.utils.ClientKeyManager;
 import com.vladurares.tcpclient.utils.ConfigReader;
 import com.vladurares.tcpclient.ui.adapters.ConversationAdapter;
@@ -58,6 +60,12 @@ public class MainActivity extends AppCompatActivity {
     private int pendingChatTargetId = -1;
     private String pendingChatName = null;
     private static final String TAG = "MainActivity";
+    private final PacketRouter.PacketCallback onChats = this::handleGetChats;
+    private final PacketRouter.PacketCallback onUsers = this::handleGetUsers;
+    private final PacketRouter.PacketCallback onBundle = this::handleBundleResponse;
+    private final PacketRouter.PacketCallback onCreate = this::handleCreateBroadcast;
+    private final PacketRouter.PacketCallback onRename = this::handleRenameBroadcast;
+    private final PacketRouter.PacketCallback onDelete = this::handleDeleteBroadcast;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -113,7 +121,10 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
+        TcpConnection.setPacketListener(PacketRouter.getInstance());
         TcpConnection.startReading();
+
+        GlobalPacketHandlers.register(this);
     }
 
     @Override
@@ -123,7 +134,13 @@ public class MainActivity extends AppCompatActivity {
         pendingSpinner = null;
         pendingRawUsers = null;
 
-        TcpConnection.setPacketListener(this::handlePacketOnUI);
+        PacketRouter r = PacketRouter.getInstance();
+        r.on(PacketType.GET_CHATS_RESPONSE, onChats);
+        r.on(PacketType.GET_USERS_RESPONSE, onUsers);
+        r.on(PacketType.GET_BUNDLE_RESPONSE, onBundle);
+        r.on(PacketType.CREATE_CHAT_BROADCAST, onCreate);
+        r.on(PacketType.RENAME_CHAT_BROADCAST, onRename);
+        r.on(PacketType.DELETE_CHAT_BROADCAST, onDelete);
 
         Socket socket = TcpConnection.socket;
         if (socket == null || socket.isClosed() || !socket.isConnected()) {
@@ -131,6 +148,19 @@ public class MainActivity extends AppCompatActivity {
         } else {
             refreshConversations();
         }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+
+        PacketRouter r = PacketRouter.getInstance();
+        r.off(PacketType.GET_CHATS_RESPONSE, onChats);
+        r.off(PacketType.GET_USERS_RESPONSE, onUsers);
+        r.off(PacketType.GET_BUNDLE_RESPONSE, onBundle);
+        r.off(PacketType.CREATE_CHAT_BROADCAST, onCreate);
+        r.off(PacketType.RENAME_CHAT_BROADCAST, onRename);
+        r.off(PacketType.DELETE_CHAT_BROADCAST, onDelete);
     }
 
     @Override
@@ -146,149 +176,93 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void handlePacketOnUI(NetworkPacket packet) {
-        runOnUiThread(() -> handlePacket(packet));
+    @SuppressLint("NotifyDataSetChanged")
+    private void handleGetChats(NetworkPacket packet) {
+        runOnUiThread(() -> {
+            try {
+                Type listType = new TypeToken<List<GroupChat>>(){}.getType();
+                List<GroupChat> groupChats = gson.fromJson(packet.getPayload(), listType);
+
+                if (groupChats == null) groupChats = new ArrayList<>();
+
+                LocalStorage.setCurrentUserGroupChats(groupChats);
+                adapter.setGroupChats(groupChats);
+                adapter.notifyDataSetChanged();
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to parse chat list from server.", e);
+            }
+        });
+    }
+
+    private void handleGetUsers(NetworkPacket packet) {
+        runOnUiThread(() -> {
+            try {
+                Type userListType = new TypeToken<List<String>>(){}.getType();
+                List<String> serverList = gson.fromJson(packet.getPayload(), userListType);
+                updateSpinnerData(serverList);
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to parse users list.", e);
+            }
+        });
+    }
+
+    private void handleBundleResponse(NetworkPacket packet) {
+        runOnUiThread(() -> {
+            try {
+                ChatDtos.GetBundleResponseDto bundle = gson.fromJson(packet.getPayload(), ChatDtos.GetBundleResponseDto.class);
+                if (bundle.targetUserId != pendingChatTargetId) return;
+
+                java.security.PublicKey bobIdentityKey = CryptoHelper.stringToDilithiumPublic(bundle.identityKeyPublic);
+                java.security.PublicKey bobPreKey = CryptoHelper.stringToKyberPublic(bundle.signedPreKeyPublic);
+                byte[] bobSignature = android.util.Base64.decode(bundle.signature, android.util.Base64.NO_WRAP);
+
+                boolean isSigValid = CryptoHelper.verifySignature(bobIdentityKey, bobPreKey.getEncoded(), bobSignature);
+                if (!isSigValid) {
+                    Toast.makeText(this, "SECURITY ALERT: Invalid signature!", Toast.LENGTH_LONG).show();
+                    Log.e(TAG, "SECURITY ALERT: Dilithium signature validation failed for target ID: " + pendingChatTargetId);
+                    return;
+                }
+
+                CryptoHelper.KEMResult kemResult = CryptoHelper.encapsulate(bobPreKey);
+                String ciphertextBase64 = android.util.Base64.encodeToString(kemResult.wrappedKey, android.util.Base64.NO_WRAP);
+
+                LocalStorage.pendingSecretKey = android.util.Base64.encodeToString(kemResult.aesKey.getEncoded(), android.util.Base64.NO_WRAP);
+
+                ChatDtos.CreateGroupDto createDto = new ChatDtos.CreateGroupDto(pendingChatTargetId, pendingChatName, ciphertextBase64);
+                NetworkPacket createReq = new NetworkPacket(PacketType.CREATE_CHAT_REQUEST, TcpConnection.getCurrentUserId(), createDto);
+                TcpConnection.sendPacket(createReq);
+
+            } catch (Exception e) {
+                Log.e(TAG, "Critical Crypto error while processing Post-Quantum bundle.", e);
+                Toast.makeText(this, "Crypto Error: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     @SuppressLint("NotifyDataSetChanged")
-    private void handlePacket(NetworkPacket packet) {
-        switch (packet.getType()) {
-            case GET_CHATS_RESPONSE:
-                try {
-                    Type listType = new TypeToken<List<GroupChat>>(){}.getType();
-                    List<GroupChat> groupChats = gson.fromJson(packet.getPayload(), listType);
+    private void handleCreateBroadcast(NetworkPacket packet) {
+        runOnUiThread(() -> {
+            if (adapter == null) return;
+            adapter.setEnabled(true);
+            if (dialog != null && dialog.isShowing()) dialog.dismiss();
+            adapter.setGroupChats(LocalStorage.getCurrentUserGroupChats());
+            adapter.notifyDataSetChanged();
+            recyclerView.scrollToPosition(0);
+        });
+    }
 
-                    if (groupChats == null) groupChats = new ArrayList<>();
+    private void handleRenameBroadcast(NetworkPacket packet) {
+        runOnUiThread(() -> {
+            adapter.setGroupChats(LocalStorage.getCurrentUserGroupChats());
+            adapter.notifyDataSetChanged();
+        });
+    }
 
-                    LocalStorage.setCurrentUserGroupChats(groupChats);
-                    adapter.setGroupChats(groupChats);
-                    adapter.notifyDataSetChanged();
-                } catch (Exception e) { Log.e(TAG, "Failed to parse chat list from server.", e); }
-                break;
-
-            case GET_USERS_RESPONSE:
-                try {
-                    Type userListType = new TypeToken<List<String>>(){}.getType();
-                    List<String> serverList = gson.fromJson(packet.getPayload(), userListType);
-                    updateSpinnerData(serverList);
-                } catch (Exception e) { Log.e(TAG, "Failed to parse users list.", e); }
-                break;
-
-            case GET_BUNDLE_RESPONSE:
-                try {
-                    ChatDtos.GetBundleResponseDto bundle = gson.fromJson(packet.getPayload(), ChatDtos.GetBundleResponseDto.class);
-                    if (bundle.targetUserId != pendingChatTargetId) break;
-
-                    java.security.PublicKey bobIdentityKey = CryptoHelper.stringToDilithiumPublic(bundle.identityKeyPublic);
-                    java.security.PublicKey bobPreKey = CryptoHelper.stringToKyberPublic(bundle.signedPreKeyPublic);
-                    byte[] bobSignature = android.util.Base64.decode(bundle.signature, android.util.Base64.NO_WRAP);
-
-                    boolean isSigValid = CryptoHelper.verifySignature(bobIdentityKey, bobPreKey.getEncoded(), bobSignature);
-                    if (!isSigValid) {
-                        Toast.makeText(this, "SECURITY ALERT: Invalid signature!", Toast.LENGTH_LONG).show();
-                        Log.e(TAG, "SECURITY ALERT: Dilithium signature validation failed for target ID: " + pendingChatTargetId);
-                        return;
-                    }
-
-                    CryptoHelper.KEMResult kemResult = CryptoHelper.encapsulate(bobPreKey);
-                    String ciphertextBase64 = android.util.Base64.encodeToString(kemResult.wrappedKey, android.util.Base64.NO_WRAP);
-
-                    LocalStorage.pendingSecretKey = android.util.Base64.encodeToString(kemResult.aesKey.getEncoded(), android.util.Base64.NO_WRAP);
-
-                    ChatDtos.CreateGroupDto createDto = new ChatDtos.CreateGroupDto(pendingChatTargetId, pendingChatName, ciphertextBase64);
-                    NetworkPacket createReq = new NetworkPacket(PacketType.CREATE_CHAT_REQUEST, TcpConnection.getCurrentUserId(), createDto);
-                    TcpConnection.sendPacket(createReq);
-
-                } catch (Exception e) {
-                    Log.e(TAG, "Critical Crypto error while processing Post-Quantum bundle.", e);
-                    Toast.makeText(this, "Crypto Error: " + e.getMessage(), Toast.LENGTH_SHORT).show();
-                }
-                break;
-
-            case CREATE_CHAT_BROADCAST:
-                ChatDtos.NewChatBroadcastDto broadcastDto = gson.fromJson(packet.getPayload(), ChatDtos.NewChatBroadcastDto.class);
-                GroupChat newChat = broadcastDto.groupInfo;
-
-                if (adapter != null) adapter.setEnabled(true);
-                if (dialog != null && dialog.isShowing()) dialog.dismiss();
-
-                if (newChat.getId() <= 0) break;
-
-                boolean chatExistsInUI = false;
-                List<GroupChat> currentListUi = LocalStorage.getCurrentUserGroupChats();
-
-                for (GroupChat existing : currentListUi) {
-                    if (existing.getId() == newChat.getId()) {
-                        chatExistsInUI = true;
-                        break;
-                    }
-                }
-
-                if (!chatExistsInUI) {
-                    LocalStorage.getCurrentUserGroupChats().add(0, newChat);
-                    adapter.setGroupChats(LocalStorage.getCurrentUserGroupChats());
-                    adapter.notifyItemInserted(0);
-                    recyclerView.scrollToPosition(0);
-                    Log.i(TAG, "[UI] New chat successfully added: " + newChat.getName());
-                } else {
-                    Log.w(TAG, "[UI] Chat already exists in UI. Ignoring visual add.");
-                }
-
-                ClientKeyManager keyMgr = new ClientKeyManager(this, TcpConnection.getCurrentUserId());
-
-                if (broadcastDto.keyCiphertext != null && !broadcastDto.keyCiphertext.isEmpty()) {
-                    try {
-                        byte[] cipherBytes = android.util.Base64.decode(broadcastDto.keyCiphertext, android.util.Base64.NO_WRAP);
-
-                        String myPrivStr = keyMgr.getMyPreKeyPrivateKey();
-                        java.security.PrivateKey myPriv = CryptoHelper.stringToKyberPrivate(myPrivStr);
-
-                        javax.crypto.SecretKey shared = CryptoHelper.decapsulate(myPriv, cipherBytes);
-                        String keyBase64 = android.util.Base64.encodeToString(shared.getEncoded(), android.util.Base64.NO_WRAP);
-
-                        keyMgr.saveKey(newChat.getId(), keyBase64);
-                        Log.i(TAG, "[BOB] Post-Quantum Key saved successfully!");
-                    } catch (Exception e) { Log.e(TAG, "Error generating new chat or saving cryptographic key.", e); }
-                }
-                else if (LocalStorage.pendingSecretKey != null) {
-                    SecretKey existingKey = keyMgr.getKey(newChat.getId());
-                    if (existingKey == null) {
-                        keyMgr.saveKey(newChat.getId(), LocalStorage.pendingSecretKey);
-                        Log.i(TAG, "[ALICE] Key saved successfully from pending state!" );
-                    } else {
-                        Log.i(TAG, "[ALICE] Key already exists, not overwriting.");
-                    }
-                    LocalStorage.pendingSecretKey = null;
-                }
-                break;
-
-            case RENAME_CHAT_BROADCAST:
-                ChatDtos.RenameGroupDto renameDto = gson.fromJson(packet.getPayload(), ChatDtos.RenameGroupDto.class);
-
-                List<GroupChat> currentList = LocalStorage.getCurrentUserGroupChats();
-                for (int i = 0; i < currentList.size(); i++) {
-                    if (currentList.get(i).getId() == renameDto.chatId) {
-                        currentList.get(i).setName(renameDto.newName);
-                        adapter.notifyItemChanged(i);
-                        break;
-                    }
-                }
-                break;
-
-            case DELETE_CHAT_BROADCAST:
-                int deletedId = gson.fromJson(packet.getPayload(), Integer.class);
-
-                List<GroupChat> deleteList = LocalStorage.getCurrentUserGroupChats();
-                for (int i = 0; i < deleteList.size(); i++) {
-                    if (deleteList.get(i).getId() == deletedId) {
-                        deleteList.remove(i);
-                        adapter.notifyItemRemoved(i);
-                        break;
-                    }
-                }
-                break;
-
-        }
+    private void handleDeleteBroadcast(NetworkPacket packet) {
+        runOnUiThread(() -> {
+            adapter.setGroupChats(LocalStorage.getCurrentUserGroupChats());
+            adapter.notifyDataSetChanged();
+        });
     }
 
     private void refreshConversations() {
@@ -469,16 +443,16 @@ public class MainActivity extends AppCompatActivity {
 
     private void attemptAutoReconnect() {
         SharedPreferences preferences = SecureStorage.getEncryptedPrefs(getApplicationContext());
-        String savedUser = preferences.getString("username", null);
+        String savedEmail = preferences.getString("email", null);
         String savedPassword = preferences.getString("password", null);
-        if (savedUser == null || savedPassword == null) { goToLogin(); return; }
+        if (savedEmail == null || savedPassword == null) { goToLogin(); return; }
 
         new Thread(() -> {
             try {
                 ConfigReader configReader = new ConfigReader(this);
                 TcpConnection.connect(configReader.getServerIp(), configReader.getServerPort());
 
-                ChatDtos.AuthDto authDto = new ChatDtos.AuthDto(savedUser, savedPassword);
+                ChatDtos.AuthDto authDto = new ChatDtos.AuthDto(savedEmail, savedPassword);
                 NetworkPacket req = new NetworkPacket(PacketType.LOGIN_REQUEST, 0, authDto);
                 TcpConnection.sendPacket(req);
 
@@ -491,8 +465,9 @@ public class MainActivity extends AppCompatActivity {
                         runOnUiThread(() -> {
                             Toast.makeText(this, "Auto-reconnected!", Toast.LENGTH_SHORT).show();
 
-                            TcpConnection.setPacketListener(this::handlePacketOnUI);
+                            TcpConnection.setPacketListener(PacketRouter.getInstance());
                             TcpConnection.startReading();
+                            GlobalPacketHandlers.register(this);
                             refreshConversations();
                         });
                     } else runOnUiThread(this::goToLogin);

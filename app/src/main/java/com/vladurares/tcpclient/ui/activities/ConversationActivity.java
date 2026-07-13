@@ -21,6 +21,7 @@ import androidx.core.view.WindowInsetsCompat;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.vladurares.tcpclient.network.PacketRouter;
 import com.vladurares.tcpclient.storage.LocalStorage;
 import com.vladurares.tcpclient.utils.ClientKeyManager;
 import com.vladurares.tcpclient.utils.ConfigReader;
@@ -54,6 +55,13 @@ public class ConversationActivity extends AppCompatActivity {
     private String chatName;
     private int targetUserId;
     private static final String TAG = "ConversationActivity";
+    private final PacketRouter.PacketCallback onMessages = this::handleMessages;
+    private final PacketRouter.PacketCallback onReceive = this::handleReceiveMessage;
+    private final PacketRouter.PacketCallback onEdit = this::handleEditBroadcast;
+    private final PacketRouter.PacketCallback onDeleteMsg = this::handleDeleteMessageBroadcast;
+    private final PacketRouter.PacketCallback onMembers = this::handleMembers;
+    private final PacketRouter.PacketCallback onDeleteChat = this::handleDeleteChat;
+    private final PacketRouter.PacketCallback onRenameChat = this::handleRenameChat;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -109,173 +117,33 @@ public class ConversationActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        TcpConnection.setPacketListener(this::handlePacketOnUI);
+        PacketRouter r = PacketRouter.getInstance();
+        r.on(PacketType.GET_MESSAGES_RESPONSE, onMessages);
+        r.on(PacketType.RECEIVE_MESSAGE, onReceive);
+        r.on(PacketType.EDIT_MESSAGE_BROADCAST, onEdit);
+        r.on(PacketType.DELETE_MESSAGE_BROADCAST, onDeleteMsg);
+        r.on(PacketType.GET_CHAT_MEMBERS_RESPONSE, onMembers);
+        r.on(PacketType.DELETE_CHAT_BROADCAST, onDeleteChat);
+        r.on(PacketType.RENAME_CHAT_BROADCAST, onRenameChat);
         sendEnterChatRequest();
     }
 
     @Override
     protected void onPause() {
         super.onPause();
+        PacketRouter r = PacketRouter.getInstance();
+        r.off(PacketType.GET_MESSAGES_RESPONSE, onMessages);
+        r.off(PacketType.RECEIVE_MESSAGE, onReceive);
+        r.off(PacketType.EDIT_MESSAGE_BROADCAST, onEdit);
+        r.off(PacketType.DELETE_MESSAGE_BROADCAST, onDeleteMsg);
+        r.off(PacketType.GET_CHAT_MEMBERS_RESPONSE, onMembers);
+        r.off(PacketType.DELETE_CHAT_BROADCAST, onDeleteChat);
+        r.off(PacketType.RENAME_CHAT_BROADCAST, onRenameChat);
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
-    }
-
-    private void handlePacketOnUI(NetworkPacket packet) {
-        runOnUiThread(() -> handlePacket(packet));
-    }
-
-    @SuppressLint("NotifyDataSetChanged")
-    private void handlePacket(NetworkPacket packet) {
-        try {
-            SecretKey chatKey = keyManager.getKey(currentChatId);
-
-            switch (packet.getType()) {
-                case GET_MESSAGES_RESPONSE:
-                    Type listType = new TypeToken<List<Message>>(){}.getType();
-                    List<Message> history = gson.fromJson(packet.getPayload(), listType);
-
-                    messages.clear();
-                    if (history != null) {
-                        for (Message m : history) {
-                            try {
-                                String decryptedText = CryptoHelper.unpackAndDecrypt(chatKey, m.getContent());
-                                m.setContent(decryptedText.getBytes());
-                            } catch (Exception e) {
-                                Log.e(TAG, "Decryption failed for history message ID: " + m.getId());
-                                m.setContent("[Decryption Error]".getBytes());
-                            }
-                        }
-                        messages.addAll(history);
-                    }
-                    messageAdapter.notifyDataSetChanged();
-                    scrollToBottom();
-                    break;
-
-                case RECEIVE_MESSAGE:
-                    Message msg = gson.fromJson(packet.getPayload(), Message.class);
-                    if (msg != null && msg.getGroupId() == this.currentChatId) {
-                        try {
-                            String decryptedText = CryptoHelper.unpackAndDecrypt(chatKey, msg.getContent());
-                            msg.setContent(decryptedText.getBytes());
-                        } catch (Exception e) {
-                            Log.e(TAG, "Decryption failed for new incoming message");
-                            msg.setContent("[Decryption Error]".getBytes());
-                        }
-                        messages.add(msg);
-                        messageAdapter.notifyItemInserted(messages.size() - 1);
-                        scrollToBottom();
-                    }
-                    break;
-
-                case EDIT_MESSAGE_BROADCAST:
-                    ChatDtos.EditMessageDto editDto = gson.fromJson(packet.getPayload(), ChatDtos.EditMessageDto.class);
-                    for (int i = 0; i < messages.size(); i++) {
-                        if (messages.get(i).getId() == editDto.messageId) {
-
-                            try {
-                                String decryptedEdit = CryptoHelper.unpackAndDecrypt(chatKey, editDto.newContent);
-                                messages.get(i).setContent(decryptedEdit.getBytes());
-
-                            } catch (Exception e) {
-                                Log.e(TAG, "Failed to decrypt edited message", e);
-                                messages.get(i).setContent("[Decryption Error on Edit]".getBytes());
-                            }
-
-                            messageAdapter.notifyItemChanged(i);
-                            break;
-                        }
-                    }
-                    break;
-
-                case DELETE_MESSAGE_BROADCAST:
-                    int deletedId = gson.fromJson(packet.getPayload(), Integer.class);
-                    for (int i = 0; i < messages.size(); i++) {
-                        if (messages.get(i).getId() == deletedId) {
-                            messages.remove(i);
-                            messageAdapter.notifyItemRemoved(i);
-                            break;
-                        }
-                    }
-                    break;
-
-                case GET_CHAT_MEMBERS_RESPONSE:
-                    Type idListType = new TypeToken<List<Integer>>(){}.getType();
-                    List<Integer> memberIds = gson.fromJson(packet.getPayload(), idListType);
-
-                    if (memberIds != null) {
-                        int myId = TcpConnection.getCurrentUserId();
-                        for (Integer uid : memberIds) {
-                            if (uid != myId) {
-                                this.targetUserId = uid;
-                                Log.i(TAG, "Partner ID retrieved for calls: " + targetUserId);
-                                break;
-                            }
-                        }
-                    }
-                    break;
-
-                case DELETE_CHAT_BROADCAST:
-                    int deletedChatId = gson.fromJson(packet.getPayload(), Integer.class);
-                    if (deletedChatId == currentChatId) {
-                        runOnUiThread(() -> {
-                            Toast.makeText(this, "This chat was deleted!", Toast.LENGTH_SHORT).show();
-                            finish();
-                        });
-                    }
-                    break;
-
-                case CREATE_CHAT_BROADCAST:
-                    ChatDtos.NewChatBroadcastDto broadcastDto = gson.fromJson(packet.getPayload(), ChatDtos.NewChatBroadcastDto.class);
-                    if (broadcastDto.keyCiphertext != null && !broadcastDto.keyCiphertext.isEmpty()) {
-                        try {
-                            byte[] cipherBytes = android.util.Base64.decode(broadcastDto.keyCiphertext, android.util.Base64.NO_WRAP);
-                            String myPrivStr = keyManager.getMyPreKeyPrivateKey();
-                            java.security.PrivateKey myPriv = CryptoHelper.stringToKyberPrivate(myPrivStr);
-                            javax.crypto.SecretKey shared = CryptoHelper.decapsulate(myPriv, cipherBytes);
-                            String keyBase64 = android.util.Base64.encodeToString(shared.getEncoded(), android.util.Base64.NO_WRAP);
-                            keyManager.saveKey(broadcastDto.groupInfo.getId(), keyBase64);
-                            Log.i(TAG, "[BOB] Key saved from ConversationActivity!");
-                        } catch (Exception e) {
-                            Log.e(TAG, "Error saving key in ConversationActivity", e);
-                        }
-                    }
-                    break;
-
-                case RENAME_CHAT_BROADCAST:
-                    try {
-                        ChatDtos.RenameGroupDto renameDto = gson.fromJson(packet.getPayload(), ChatDtos.RenameGroupDto.class);
-
-                        if (renameDto.chatId == currentChatId) {
-
-                            chatName = renameDto.newName;
-
-                            TextView txtChatName = findViewById(R.id.txtChatName);
-                            txtChatName.setText(chatName);
-
-                            List<GroupChat> globalChats = LocalStorage.getCurrentUserGroupChats();
-                            if (globalChats != null) {
-                                for (GroupChat chat : globalChats) {
-                                    if (chat.getId() == currentChatId) {
-                                        chat.setName(chatName);
-                                        break;
-                                    }
-                                }
-                            }
-                            Log.i(TAG, "Chat rename live in: " + chatName);
-                        }
-                    } catch (Exception e) {
-                        Log.e(TAG, "Error RENAME_CHAT_BROADCAST in ConversationActivity", e);
-                    }
-                    break;
-
-                case ENTER_CHAT_RESPONSE: break;
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "General error in handlePacket", e);
-        }
     }
 
     public void handleMessage(View view) {
@@ -321,6 +189,150 @@ public class ConversationActivity extends AppCompatActivity {
     private void performDelete(int messageId) {
         NetworkPacket packet = new NetworkPacket(PacketType.DELETE_MESSAGE_REQUEST, TcpConnection.getCurrentUserId(), messageId);
         TcpConnection.sendPacket(packet);
+    }
+
+    @SuppressLint("NotifyDataSetChanged")
+    private void handleMessages(NetworkPacket packet) {
+        runOnUiThread(() -> {
+            try {
+                SecretKey chatKey = keyManager.getKey(currentChatId);
+                Type listType = new TypeToken<List<Message>>(){}.getType();
+                List<Message> history = gson.fromJson(packet.getPayload(), listType);
+
+                messages.clear();
+                if (history != null) {
+                    for (Message m : history) {
+                        try {
+                            String decryptedText = CryptoHelper.unpackAndDecrypt(chatKey, m.getContent());
+                            m.setContent(decryptedText.getBytes());
+                        } catch (Exception e) {
+                            Log.e(TAG, "Decryption failed for history message ID: " + m.getId());
+                            m.setContent("[Decryption Error]".getBytes());
+                        }
+                    }
+                    messages.addAll(history);
+                }
+                messageAdapter.notifyDataSetChanged();
+                scrollToBottom();
+            } catch (Exception e) {
+                Log.e(TAG, "Error parsing messages", e);
+            }
+        });
+    }
+
+    private void handleReceiveMessage(NetworkPacket packet) {
+        runOnUiThread(() -> {
+            try {
+                SecretKey chatKey = keyManager.getKey(currentChatId);
+                Message msg = gson.fromJson(packet.getPayload(), Message.class);
+                if (msg != null && msg.getGroupId() == currentChatId) {
+                    try {
+                        String decryptedText = CryptoHelper.unpackAndDecrypt(chatKey, msg.getContent());
+                        msg.setContent(decryptedText.getBytes());
+                    } catch (Exception e) {
+                        Log.e(TAG, "Decryption failed for new incoming message");
+                        msg.setContent("[Decryption Error]".getBytes());
+                    }
+                    messages.add(msg);
+                    messageAdapter.notifyItemInserted(messages.size() - 1);
+                    scrollToBottom();
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Error receiving message", e);
+            }
+        });
+    }
+
+    private void handleEditBroadcast(NetworkPacket packet) {
+        runOnUiThread(() -> {
+            try {
+                SecretKey chatKey = keyManager.getKey(currentChatId);
+                ChatDtos.EditMessageDto editDto = gson.fromJson(packet.getPayload(), ChatDtos.EditMessageDto.class);
+                for (int i = 0; i < messages.size(); i++) {
+                    if (messages.get(i).getId() == editDto.messageId) {
+                        try {
+                            String decryptedEdit = CryptoHelper.unpackAndDecrypt(chatKey, editDto.newContent);
+                            messages.get(i).setContent(decryptedEdit.getBytes());
+                        } catch (Exception e) {
+                            Log.e(TAG, "Failed to decrypt edited message", e);
+                            messages.get(i).setContent("[Decryption Error on Edit]".getBytes());
+                        }
+                        messageAdapter.notifyItemChanged(i);
+                        break;
+                    }
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Error handling edit", e);
+            }
+        });
+    }
+
+    private void handleDeleteMessageBroadcast(NetworkPacket packet) {
+        runOnUiThread(() -> {
+            int deletedId = gson.fromJson(packet.getPayload(), Integer.class);
+            for (int i = 0; i < messages.size(); i++) {
+                if (messages.get(i).getId() == deletedId) {
+                    messages.remove(i);
+                    messageAdapter.notifyItemRemoved(i);
+                    break;
+                }
+            }
+        });
+    }
+
+    private void handleMembers(NetworkPacket packet) {
+        runOnUiThread(() -> {
+            Type idListType = new TypeToken<List<Integer>>(){}.getType();
+            List<Integer> memberIds = gson.fromJson(packet.getPayload(), idListType);
+
+            if (memberIds != null) {
+                int myId = TcpConnection.getCurrentUserId();
+                for (Integer uid : memberIds) {
+                    if (uid != myId) {
+                        targetUserId = uid;
+                        Log.i(TAG, "Partner ID retrieved for calls: " + targetUserId);
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
+    private void handleDeleteChat(NetworkPacket packet) {
+        int deletedChatId = gson.fromJson(packet.getPayload(), Integer.class);
+        if (deletedChatId == currentChatId) {
+            runOnUiThread(() -> {
+                Toast.makeText(this, "This chat was deleted!", Toast.LENGTH_SHORT).show();
+                finish();
+            });
+        }
+    }
+
+    private void handleRenameChat(NetworkPacket packet) {
+        runOnUiThread(() -> {
+            try {
+                ChatDtos.RenameGroupDto renameDto = gson.fromJson(packet.getPayload(), ChatDtos.RenameGroupDto.class);
+
+                if (renameDto.chatId == currentChatId) {
+                    chatName = renameDto.newName;
+                    TextView txtChatName = findViewById(R.id.txtChatName);
+                    txtChatName.setText(chatName);
+
+                    List<GroupChat> globalChats = LocalStorage.getCurrentUserGroupChats();
+                    if (globalChats != null) {
+                        for (GroupChat chat : globalChats) {
+                            if (chat.getId() == currentChatId) {
+                                chat.setName(chatName);
+                                break;
+                            }
+                        }
+                    }
+                    Log.i(TAG, "Chat rename live in: " + chatName);
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Error RENAME_CHAT_BROADCAST in ConversationActivity", e);
+            }
+        });
     }
 
     private void sendEnterChatRequest() {

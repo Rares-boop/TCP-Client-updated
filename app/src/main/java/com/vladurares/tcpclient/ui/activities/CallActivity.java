@@ -8,6 +8,7 @@ import android.widget.TextView;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 
+import com.vladurares.tcpclient.network.PacketRouter;
 import com.vladurares.tcpclient.network.VideoCallManager;
 import com.vladurares.tcpclient.utils.ClientKeyManager;
 import com.vladurares.tcpclient.R;
@@ -24,6 +25,7 @@ import java.util.concurrent.Executor;
 
 import javax.crypto.SecretKey;
 
+import chat.network.ChatDtos;
 import chat.network.NetworkPacket;
 import chat.network.PacketType;
 
@@ -41,6 +43,10 @@ public class CallActivity extends AppCompatActivity {
     private volatile boolean isCallActive = true;
     private final com.google.gson.Gson gson = new com.google.gson.Gson();
     private ClientKeyManager keyManager;
+    private final PacketRouter.PacketCallback onCallEnd = this::handleCallEnd;
+    private final PacketRouter.PacketCallback onCallDeny = this::handleCallDeny;
+    private final PacketRouter.PacketCallback onDeleteChat = this::handleDeleteChat;
+    private final PacketRouter.PacketCallback onRenameChat = this::handleRenameChat;
 
     @SuppressLint("SetTextI18n")
     @Override
@@ -162,62 +168,55 @@ public class CallActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        TcpConnection.setPacketListener(this::handlePacketOnUI);
+        PacketRouter r = PacketRouter.getInstance();
+        r.on(PacketType.CALL_END, onCallEnd);
+        r.on(PacketType.CALL_DENY, onCallDeny);
+        r.on(PacketType.DELETE_CHAT_BROADCAST, onDeleteChat);
+        r.on(PacketType.RENAME_CHAT_BROADCAST, onRenameChat);
     }
 
     @Override
     protected void onPause() {
         super.onPause();
-        TcpConnection.setPacketListener(null);
+        PacketRouter r = PacketRouter.getInstance();
+        r.off(PacketType.CALL_END, onCallEnd);
+        r.off(PacketType.CALL_DENY, onCallDeny);
+        r.off(PacketType.DELETE_CHAT_BROADCAST, onDeleteChat);
+        r.off(PacketType.RENAME_CHAT_BROADCAST, onRenameChat);
     }
 
-    private void handlePacketOnUI(NetworkPacket packet) {
+    private void handleCallEnd(NetworkPacket packet) {
         runOnUiThread(() -> {
-            try {
-                switch (packet.getType()) {
-                    case CALL_END:
-                    case CALL_DENY:
-                        android.widget.Toast.makeText(this, "Call ended by partner.", android.widget.Toast.LENGTH_SHORT).show();
-                        closeCallScreen();
-                        break;
+            android.widget.Toast.makeText(this, "Call ended by partner.", android.widget.Toast.LENGTH_SHORT).show();
+            closeCallScreen();
+        });
+    }
 
-                    case DELETE_CHAT_BROADCAST:
-                        int deletedChatId = gson.fromJson(packet.getPayload(), Integer.class);
-                        if (deletedChatId == currentChatId) {
-                            android.widget.Toast.makeText(this, "Chat was deleted! Ending call.", android.widget.Toast.LENGTH_SHORT).show();
-                            closeCallScreen();
-                        }
-                        break;
+    private void handleCallDeny(NetworkPacket packet) {
+        runOnUiThread(() -> {
+            android.widget.Toast.makeText(this, "Call ended by partner.", android.widget.Toast.LENGTH_SHORT).show();
+            closeCallScreen();
+        });
+    }
 
-                    case RENAME_CHAT_BROADCAST:
-                        chat.network.ChatDtos.RenameGroupDto renameDto = gson.fromJson(packet.getPayload(),
-                                chat.network.ChatDtos.RenameGroupDto.class);
-                        if (renameDto.chatId == currentChatId) {
-                            TextView txtName = findViewById(R.id.txtCallName);
-                            if (txtName != null) {
-                                txtName.setText(renameDto.newName);
-                            }
-                            Log.i("CallActivity", "Call UI updated with new chat name: " + renameDto.newName);
-                        }
-                        break;
+    private void handleDeleteChat(NetworkPacket packet) {
+        runOnUiThread(() -> {
+            int deletedChatId = gson.fromJson(packet.getPayload(), Integer.class);
+            if (deletedChatId == currentChatId) {
+                android.widget.Toast.makeText(this, "Chat was deleted! Ending call.", android.widget.Toast.LENGTH_SHORT).show();
+                closeCallScreen();
+            }
+        });
+    }
 
-                    case CREATE_CHAT_BROADCAST:
-                        chat.network.ChatDtos.NewChatBroadcastDto broadcastDto = gson.fromJson(packet.getPayload(),
-                                chat.network.ChatDtos.NewChatBroadcastDto.class);
-                        if (broadcastDto.keyCiphertext != null && !broadcastDto.keyCiphertext.isEmpty()) {
-                            byte[] cipherBytes = android.util.Base64.decode(broadcastDto.keyCiphertext, android.util.Base64.NO_WRAP);
-                            String myPrivStr = keyManager.getMyPreKeyPrivateKey();
-                            java.security.PrivateKey myPriv = chat.security.CryptoHelper.stringToKyberPrivate(myPrivStr);
-                            javax.crypto.SecretKey shared = chat.security.CryptoHelper.decapsulate(myPriv, cipherBytes);
-                            String keyBase64 = android.util.Base64.encodeToString(shared.getEncoded(), android.util.Base64.NO_WRAP);
-
-                            keyManager.saveKey(broadcastDto.groupInfo.getId(), keyBase64);
-                            Log.i("CallActivity", "[BOB] Background Key saved while in an active call!");
-                        }
-                        break;
+    private void handleRenameChat(NetworkPacket packet) {
+        runOnUiThread(() -> {
+            ChatDtos.RenameGroupDto renameDto = gson.fromJson(packet.getPayload(), ChatDtos.RenameGroupDto.class);
+            if (renameDto.chatId == currentChatId) {
+                TextView txtName = findViewById(R.id.txtCallName);
+                if (txtName != null) {
+                    txtName.setText(renameDto.newName);
                 }
-            } catch (Exception e) {
-                Log.e("CallActivity", "Error handling packet in CallActivity", e);
             }
         });
     }

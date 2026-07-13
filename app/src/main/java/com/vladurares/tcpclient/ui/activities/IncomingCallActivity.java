@@ -12,9 +12,10 @@ import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.vladurares.tcpclient.R;
+import com.vladurares.tcpclient.network.PacketRouter;
 import com.vladurares.tcpclient.network.TcpConnection;
-import com.vladurares.tcpclient.utils.ClientKeyManager;
 
+import chat.network.ChatDtos;
 import chat.network.NetworkPacket;
 import chat.network.PacketType;
 
@@ -29,7 +30,9 @@ public class IncomingCallActivity extends AppCompatActivity {
     private boolean isAudio;
     private static final String TAG = "IncomingCallActivity";
     private final com.google.gson.Gson gson = new com.google.gson.Gson();
-    private ClientKeyManager keyManager;
+    private final PacketRouter.PacketCallback onCallEnd = this::handleCallEnd;
+    private final PacketRouter.PacketCallback onDeleteChat = this::handleDeleteChat;
+    private final PacketRouter.PacketCallback onRenameChat = this::handleRenameChat;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -50,70 +53,57 @@ public class IncomingCallActivity extends AppCompatActivity {
         findViewById(R.id.btnAnswer).setOnClickListener(v -> answerCall());
         findViewById(R.id.btnDecline).setOnClickListener(v -> declineCall());
 
-        keyManager = new ClientKeyManager(this, TcpConnection.getCurrentUserId());
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        TcpConnection.setPacketListener(this::handlePacketOnUI);
+        PacketRouter r = PacketRouter.getInstance();
+        r.on(PacketType.CALL_END, onCallEnd);
+        r.on(PacketType.DELETE_CHAT_BROADCAST, onDeleteChat);
+        r.on(PacketType.RENAME_CHAT_BROADCAST, onRenameChat);
     }
 
     @Override
     protected void onPause() {
         super.onPause();
-        TcpConnection.setPacketListener(null);
+        PacketRouter r = PacketRouter.getInstance();
+        r.off(PacketType.CALL_END, onCallEnd);
+        r.off(PacketType.DELETE_CHAT_BROADCAST, onDeleteChat);
+        r.off(PacketType.RENAME_CHAT_BROADCAST, onRenameChat);
     }
 
-    private void handlePacketOnUI(NetworkPacket packet) {
+    private void handleCallEnd(NetworkPacket packet) {
         runOnUiThread(() -> {
-            try {
-                switch (packet.getType()) {
-                    case CALL_END:
-                        android.widget.Toast.makeText(this, "Call cancelled by caller.", android.widget.Toast.LENGTH_SHORT).show();
-                        stopRinging();
-                        finish();
-                        break;
+            android.widget.Toast.makeText(this, "Call cancelled by caller.", android.widget.Toast.LENGTH_SHORT).show();
+            stopRinging();
+            finish();
+        });
+    }
 
-                    case DELETE_CHAT_BROADCAST:
-                        int deletedChatId = gson.fromJson(packet.getPayload(), Integer.class);
-                        if (deletedChatId == chatId) {
-                            android.widget.Toast.makeText(this, "Chat was deleted! Cancelling call.", android.widget.Toast.LENGTH_SHORT).show();
-                            stopRinging();
-                            finish();
-                        }
-                        break;
-
-                    case RENAME_CHAT_BROADCAST:
-                        chat.network.ChatDtos.RenameGroupDto renameDto = gson.fromJson(packet.getPayload(),
-                                chat.network.ChatDtos.RenameGroupDto.class);
-                        if (renameDto.chatId == chatId) {
-                            callerName = renameDto.newName;
-                            TextView txtName = findViewById(R.id.txtCallerName);
-                            txtName.setText(callerName);
-                            Log.i(TAG, "New name: " + callerName);
-                        }
-                        break;
-
-                    case CREATE_CHAT_BROADCAST:
-                        chat.network.ChatDtos.NewChatBroadcastDto broadcastDto = gson.fromJson(packet.getPayload(), chat.network.ChatDtos.NewChatBroadcastDto.class);
-                        if (broadcastDto.keyCiphertext != null && !broadcastDto.keyCiphertext.isEmpty()) {
-                            byte[] cipherBytes = android.util.Base64.decode(broadcastDto.keyCiphertext, android.util.Base64.NO_WRAP);
-                            String myPrivStr = keyManager.getMyPreKeyPrivateKey();
-                            java.security.PrivateKey myPriv = chat.security.CryptoHelper.stringToKyberPrivate(myPrivStr);
-                            javax.crypto.SecretKey shared = chat.security.CryptoHelper.decapsulate(myPriv, cipherBytes);
-                            String keyBase64 = android.util.Base64.encodeToString(shared.getEncoded(), android.util.Base64.NO_WRAP);
-
-                            keyManager.saveKey(broadcastDto.groupInfo.getId(), keyBase64);
-                            Log.i(TAG, "[BOB] Key saved in background while phone was ringing!");
-                        }
-                        break;
-                }
-            } catch (Exception e) {
-                Log.e(TAG, "Error handling packet in IncomingCallActivity", e);
+    private void handleDeleteChat(NetworkPacket packet) {
+        runOnUiThread(() -> {
+            int deletedChatId = gson.fromJson(packet.getPayload(), Integer.class);
+            if (deletedChatId == chatId) {
+                android.widget.Toast.makeText(this, "Chat was deleted! Cancelling call.", android.widget.Toast.LENGTH_SHORT).show();
+                stopRinging();
+                finish();
             }
         });
     }
+
+    private void handleRenameChat(NetworkPacket packet) {
+        runOnUiThread(() -> {
+            ChatDtos.RenameGroupDto renameDto = gson.fromJson(packet.getPayload(), ChatDtos.RenameGroupDto.class);
+            if (renameDto.chatId == chatId) {
+                callerName = renameDto.newName;
+                TextView txtName = findViewById(R.id.txtCallerName);
+                txtName.setText(callerName);
+                Log.i(TAG, "New name: " + callerName);
+            }
+        });
+    }
+
     private void startRinging() {
         try {
             Uri notification = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE);
