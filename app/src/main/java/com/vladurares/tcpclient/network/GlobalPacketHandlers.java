@@ -17,7 +17,7 @@ import chat.models.GroupChat;
 import chat.network.ChatDtos;
 import chat.network.NetworkPacket;
 import chat.network.PacketType;
-import chat.security.CryptoHelper;
+import crypto.api.CryptoHelper;
 
 public class GlobalPacketHandlers {
     private static final String TAG = "GlobalHandlers";

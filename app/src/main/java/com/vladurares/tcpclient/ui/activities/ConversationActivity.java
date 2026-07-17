@@ -32,6 +32,7 @@ import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 
 import java.lang.reflect.Type;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -42,7 +43,7 @@ import chat.models.Message;
 import chat.network.ChatDtos;
 import chat.network.NetworkPacket;
 import chat.network.PacketType;
-import chat.security.CryptoHelper;
+import crypto.api.CryptoHelper;
 
 
 public class ConversationActivity extends AppCompatActivity {
@@ -159,7 +160,7 @@ public class ConversationActivity extends AppCompatActivity {
                 return;
             }
 
-            byte[] encryptedData = CryptoHelper.encryptAndPack(chatKey, text);
+            byte[] encryptedData = CryptoHelper.encryptAndPack(chatKey, text.getBytes(StandardCharsets.UTF_8));
 
             Message msg = new Message(0, encryptedData,0, TcpConnection.getCurrentUserId(), currentChatId);
             NetworkPacket packet = new NetworkPacket(PacketType.SEND_MESSAGE, TcpConnection.getCurrentUserId(), msg);
@@ -175,7 +176,7 @@ public class ConversationActivity extends AppCompatActivity {
     private void performEdit(int messageId, String newText) {
         try {
             SecretKey chatKey = keyManager.getKey(currentChatId);
-            byte[] encryptedNewContent = CryptoHelper.encryptAndPack(chatKey, newText);
+            byte[] encryptedNewContent = CryptoHelper.encryptAndPack(chatKey, newText.getBytes(StandardCharsets.UTF_8));
 
             ChatDtos.EditMessageDto dto = new ChatDtos.EditMessageDto(messageId, encryptedNewContent);
             NetworkPacket packet = new NetworkPacket(PacketType.EDIT_MESSAGE_REQUEST, TcpConnection.getCurrentUserId(), dto);
@@ -203,8 +204,8 @@ public class ConversationActivity extends AppCompatActivity {
                 if (history != null) {
                     for (Message m : history) {
                         try {
-                            String decryptedText = CryptoHelper.unpackAndDecrypt(chatKey, m.getContent());
-                            m.setContent(decryptedText.getBytes());
+                            byte[] decrypted = CryptoHelper.unpackAndDecrypt(chatKey, m.getContent());
+                            m.setContent(decrypted);
                         } catch (Exception e) {
                             Log.e(TAG, "Decryption failed for history message ID: " + m.getId());
                             m.setContent("[Decryption Error]".getBytes());
@@ -227,8 +228,8 @@ public class ConversationActivity extends AppCompatActivity {
                 Message msg = gson.fromJson(packet.getPayload(), Message.class);
                 if (msg != null && msg.getGroupId() == currentChatId) {
                     try {
-                        String decryptedText = CryptoHelper.unpackAndDecrypt(chatKey, msg.getContent());
-                        msg.setContent(decryptedText.getBytes());
+                        byte[] decrypted = CryptoHelper.unpackAndDecrypt(chatKey, msg.getContent());
+                        msg.setContent(decrypted);
                     } catch (Exception e) {
                         Log.e(TAG, "Decryption failed for new incoming message");
                         msg.setContent("[Decryption Error]".getBytes());
@@ -251,8 +252,8 @@ public class ConversationActivity extends AppCompatActivity {
                 for (int i = 0; i < messages.size(); i++) {
                     if (messages.get(i).getId() == editDto.messageId) {
                         try {
-                            String decryptedEdit = CryptoHelper.unpackAndDecrypt(chatKey, editDto.newContent);
-                            messages.get(i).setContent(decryptedEdit.getBytes());
+                            byte[] decrypted = CryptoHelper.unpackAndDecrypt(chatKey, editDto.newContent);
+                            messages.get(i).setContent(decrypted);
                         } catch (Exception e) {
                             Log.e(TAG, "Failed to decrypt edited message", e);
                             messages.get(i).setContent("[Decryption Error on Edit]".getBytes());

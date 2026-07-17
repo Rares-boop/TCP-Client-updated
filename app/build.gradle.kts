@@ -27,8 +27,9 @@ android {
         }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+        isCoreLibraryDesugaringEnabled = true
     }
 }
 
@@ -56,6 +57,10 @@ dependencies {
 
     implementation(files("libs/bcprov-jdk18on-1.83.jar"))
     implementation(files("libs/bcpkix-jdk18on-1.83.jar"))
+    implementation(files("libs/crypto-api.jar"))
+    implementation(files("libs/tcpsecure-1.1.1-thin.jar"))
+
+    coreLibraryDesugaring(libs.desugar.jdk.libs)
 
     implementation(libs.camera.core)
     implementation(libs.camera.camera2)

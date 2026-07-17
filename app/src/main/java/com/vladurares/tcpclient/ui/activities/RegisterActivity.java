@@ -81,7 +81,7 @@ public class RegisterActivity extends AppCompatActivity {
             try {
                 TcpConnection.close();
 
-                TcpConnection.connect(config.getServerIp(), config.getServerPort());
+                TcpConnection.connect(RegisterActivity.this, config.getServerIp(), config.getServerPort());
 
                 ChatDtos.AuthDto registerData = new ChatDtos.AuthDto(username, email, password);
                 NetworkPacket request = new NetworkPacket(PacketType.REGISTER_REQUEST, 0, registerData);

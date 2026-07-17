@@ -47,7 +47,7 @@ import chat.models.User;
 import chat.network.ChatDtos;
 import chat.network.NetworkPacket;
 import chat.network.PacketType;
-import chat.security.CryptoHelper;
+import crypto.api.CryptoHelper;
 
 
 public class MainActivity extends AppCompatActivity {
@@ -251,6 +251,7 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
+    @SuppressLint("NotifyDataSetChanged")
     private void handleRenameBroadcast(NetworkPacket packet) {
         runOnUiThread(() -> {
             adapter.setGroupChats(LocalStorage.getCurrentUserGroupChats());
@@ -258,6 +259,7 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
+    @SuppressLint("NotifyDataSetChanged")
     private void handleDeleteBroadcast(NetworkPacket packet) {
         runOnUiThread(() -> {
             adapter.setGroupChats(LocalStorage.getCurrentUserGroupChats());
@@ -450,7 +452,7 @@ public class MainActivity extends AppCompatActivity {
         new Thread(() -> {
             try {
                 ConfigReader configReader = new ConfigReader(this);
-                TcpConnection.connect(configReader.getServerIp(), configReader.getServerPort());
+                TcpConnection.connect(MainActivity.this, configReader.getServerIp(), configReader.getServerPort());
 
                 ChatDtos.AuthDto authDto = new ChatDtos.AuthDto(savedEmail, savedPassword);
                 NetworkPacket req = new NetworkPacket(PacketType.LOGIN_REQUEST, 0, authDto);

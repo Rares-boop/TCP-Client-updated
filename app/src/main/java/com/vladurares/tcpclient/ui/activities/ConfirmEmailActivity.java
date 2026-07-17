@@ -60,7 +60,7 @@ public class ConfirmEmailActivity extends AppCompatActivity {
         new Thread(() -> {
             try {
                 if (TcpConnection.getSocket() == null || TcpConnection.getSocket().isClosed()) {
-                    TcpConnection.connect(config.getServerIp(), config.getServerPort());
+                    TcpConnection.connect(ConfirmEmailActivity.this, config.getServerIp(), config.getServerPort());
                 }
 
                 TcpConnection.sendPacket(new NetworkPacket(PacketType.CONFIRM_EMAIL_REQUEST, 0, code));

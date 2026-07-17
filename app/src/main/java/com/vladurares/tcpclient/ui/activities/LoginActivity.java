@@ -32,7 +32,7 @@ import chat.models.User;
 import chat.network.ChatDtos;
 import chat.network.NetworkPacket;
 import chat.network.PacketType;
-import chat.security.CryptoHelper;
+import crypto.api.CryptoHelper;
 
 
 public class LoginActivity extends AppCompatActivity {
@@ -94,7 +94,7 @@ public class LoginActivity extends AppCompatActivity {
         new Thread(() -> {
             try {
                 TcpConnection.close();
-                TcpConnection.connect(config.getServerIp(), config.getServerPort());
+                TcpConnection.connect(LoginActivity.this, config.getServerIp(), config.getServerPort());
 
                 ChatDtos.AuthDto loginData = new ChatDtos.AuthDto(email, password);
                 TcpConnection.sendPacket(new NetworkPacket(PacketType.LOGIN_REQUEST, 0, loginData));
