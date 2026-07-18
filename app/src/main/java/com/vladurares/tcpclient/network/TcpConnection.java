@@ -92,6 +92,16 @@ public class TcpConnection {
             }
         });
         readingThread.start();
+
+        new Thread(() -> {
+            while (socket != null && !socket.isClosed()) {
+                try {
+                    Thread.sleep(30000);
+                    sendPacket(new NetworkPacket(PacketType.PING, currentUserId));
+                } catch (Exception e) { break; }
+            }
+        }).start();
+
     }
     private static void handleIncomingCall(NetworkPacket packet) {
         if (appContext == null) {
