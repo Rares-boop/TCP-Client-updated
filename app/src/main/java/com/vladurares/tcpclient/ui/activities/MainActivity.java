@@ -129,9 +129,12 @@ public class MainActivity extends AppCompatActivity {
         });
 
         TcpConnection.setPacketListener(PacketRouter.getInstance());
-        TcpConnection.startReading();
-
         GlobalPacketHandlers.register(this);
+
+        Socket s = TcpConnection.socket;
+        if (s != null && !s.isClosed() && s.isConnected()) {
+            TcpConnection.startReading();
+        }
     }
 
     @Override
@@ -193,6 +196,18 @@ public class MainActivity extends AppCompatActivity {
                 LocalStorage.setCurrentUserGroupChats(groupChats);
                 adapter.setGroupChats(groupChats);
                 adapter.notifyDataSetChanged();
+
+                int openChatId = getIntent().getIntExtra("OPEN_CHAT_ID", -1);
+                if (openChatId > 0) {
+                    getIntent().removeExtra("OPEN_CHAT_ID");
+                    for (GroupChat chat : groupChats) {
+                        if (chat.getId() == openChatId) {
+                            handleChatClick(chat);
+                            break;
+                        }
+                    }
+                }
+
             } catch (Exception e) {
                 Log.e(TAG, "Failed to parse chat list from server.", e);
             }
@@ -487,6 +502,12 @@ public class MainActivity extends AppCompatActivity {
                 runOnUiThread(this::goToLogin);
             }
         }).start();
+    }
+
+    @Override
+    protected void onNewIntent(@NonNull Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
     }
 
     private void sendFcmTokenAfterReconnect(int userId) {

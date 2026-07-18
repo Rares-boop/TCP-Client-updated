@@ -114,12 +114,11 @@ public class MyFirebaseService extends FirebaseMessagingService {
         if (!hasNotificationPermission()) return;
 
         String senderName = data.getOrDefault("senderName", "New message");
-        String chatIdStr = data.getOrDefault("chatId", "-1");
 
         Intent intent = new Intent(this, MainActivity.class);
-        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         try {
-            int chatId = Integer.parseInt(chatIdStr);
+            int chatId = Integer.parseInt(data.getOrDefault("chatId", "-1"));
             if (chatId > 0) intent.putExtra("OPEN_CHAT_ID", chatId);
         } catch (NumberFormatException ignored) {}
 
@@ -141,17 +140,21 @@ public class MyFirebaseService extends FirebaseMessagingService {
     }
 
     private void createMessageNotificationChannel() {
-        NotificationChannel ch = new NotificationChannel(CHANNEL_MESSAGES, "Messages", NotificationManager.IMPORTANCE_HIGH);
-        ch.setDescription("New message notifications");
-        NotificationManager m = getSystemService(NotificationManager.class);
-        if (m != null) m.createNotificationChannel(ch);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel ch = new NotificationChannel(CHANNEL_MESSAGES, "Messages", NotificationManager.IMPORTANCE_HIGH);
+            ch.setDescription("New message notifications");
+            NotificationManager m = getSystemService(NotificationManager.class);
+            if (m != null) m.createNotificationChannel(ch);
+        }
     }
 
     private void createCallNotificationChannel() {
-        NotificationChannel ch = new NotificationChannel(CHANNEL_CALLS, "Calls", NotificationManager.IMPORTANCE_HIGH);
-        ch.setDescription("Incoming call notifications");
-        NotificationManager m = getSystemService(NotificationManager.class);
-        if (m != null) m.createNotificationChannel(ch);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel ch = new NotificationChannel(CHANNEL_CALLS, "Calls", NotificationManager.IMPORTANCE_HIGH);
+            ch.setDescription("Incoming call notifications");
+            NotificationManager m = getSystemService(NotificationManager.class);
+            if (m != null) m.createNotificationChannel(ch);
+        }
     }
 
     private boolean hasNotificationPermission() {
