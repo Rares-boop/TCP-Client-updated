@@ -4,6 +4,7 @@ import android.annotation.SuppressLint;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
+import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.LayoutInflater;
@@ -23,6 +24,7 @@ import androidx.core.view.WindowInsetsCompat;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.google.firebase.messaging.FirebaseMessaging;
 import com.vladurares.tcpclient.network.GlobalPacketHandlers;
 import com.vladurares.tcpclient.network.PacketRouter;
 import com.vladurares.tcpclient.utils.ClientKeyManager;
@@ -81,10 +83,15 @@ public class MainActivity extends AppCompatActivity {
 
         TcpConnection.setContext(this);
 
-        String[] requiredPermissions = {
-                android.Manifest.permission.RECORD_AUDIO,
-                android.Manifest.permission.CAMERA
-        };
+        List<String> permissionsToRequest = new ArrayList<>();
+        permissionsToRequest.add(android.Manifest.permission.RECORD_AUDIO);
+        permissionsToRequest.add(android.Manifest.permission.CAMERA);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissionsToRequest.add(android.Manifest.permission.POST_NOTIFICATIONS);
+        }
+
+        String[] requiredPermissions = permissionsToRequest.toArray(new String[0]);
 
         boolean needsPermissions = false;
         for (String permission : requiredPermissions) {
@@ -167,8 +174,6 @@ public class MainActivity extends AppCompatActivity {
     protected void onDestroy() {
         super.onDestroy();
         try {
-            NetworkPacket p = new NetworkPacket(PacketType.LOGOUT, TcpConnection.getCurrentUserId());
-            TcpConnection.sendPacket(p);
             TcpConnection.stopReading();
             TcpConnection.close();
         } catch (Exception e) {
@@ -471,6 +476,8 @@ public class MainActivity extends AppCompatActivity {
                             TcpConnection.startReading();
                             GlobalPacketHandlers.register(this);
                             refreshConversations();
+
+                            sendFcmTokenAfterReconnect(user.getId());
                         });
                     } else runOnUiThread(this::goToLogin);
                 } else runOnUiThread(this::goToLogin);
@@ -480,5 +487,21 @@ public class MainActivity extends AppCompatActivity {
                 runOnUiThread(this::goToLogin);
             }
         }).start();
+    }
+
+    private void sendFcmTokenAfterReconnect(int userId) {
+        FirebaseMessaging.getInstance().getToken()
+                .addOnSuccessListener(token -> {
+                    Log.i(TAG, "[FCM] Token sent after auto-reconnect.");
+                    NetworkPacket packet = new NetworkPacket(
+                            PacketType.REGISTER_FCM_TOKEN,
+                            userId,
+                            token
+                    );
+                    TcpConnection.sendPacket(packet);
+                })
+                .addOnFailureListener(e ->
+                        Log.w(TAG, "[FCM] Failed to get token on reconnect: " + e.getMessage())
+                );
     }
 }

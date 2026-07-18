@@ -1,5 +1,6 @@
 plugins {
     alias(libs.plugins.android.application)
+    id("com.google.gms.google-services")
 }
 
 android {
@@ -59,6 +60,9 @@ dependencies {
     implementation(files("libs/bcpkix-jdk18on-1.83.jar"))
     implementation(files("libs/crypto-api.jar"))
     implementation(files("libs/tcpsecure-1.1.1-thin.jar"))
+
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.messaging)
 
     coreLibraryDesugaring(libs.desugar.jdk.libs)
 

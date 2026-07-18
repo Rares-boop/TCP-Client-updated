@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "685308051476",
+    "project_id": "mesagerie-b3216",
+    "storage_bucket": "mesagerie-b3216.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:685308051476:android:60e69e3f4431553b096701",
+        "android_client_info": {
+          "package_name": "com.vladurares.tcpclient"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB4g6G94qCkxdv1Gv4RCdp2z95TcxIZRXc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

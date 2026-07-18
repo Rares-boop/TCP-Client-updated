@@ -17,6 +17,7 @@ import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
+import com.google.firebase.messaging.FirebaseMessaging;
 import com.vladurares.tcpclient.utils.ClientKeyManager;
 import com.vladurares.tcpclient.utils.ConfigReader;
 import com.vladurares.tcpclient.R;
@@ -130,6 +131,8 @@ public class LoginActivity extends AppCompatActivity {
                             generateAndPublishKeys(user.getId());
                         }
 
+                        sendFcmTokenToServer(user.getId());
+
                         startActivity(new Intent(this, MainActivity.class));
                         finish();
 
@@ -156,6 +159,22 @@ public class LoginActivity extends AppCompatActivity {
                 });
             }
         }).start();
+    }
+
+    private void sendFcmTokenToServer(int userId) {
+        FirebaseMessaging.getInstance().getToken()
+                .addOnSuccessListener(token -> {
+                    Log.i(TAG, "[FCM] Token obtained, sending to server...");
+                    NetworkPacket packet = new NetworkPacket(
+                            PacketType.REGISTER_FCM_TOKEN,
+                            userId,
+                            token
+                    );
+                    TcpConnection.sendPacket(packet);
+                })
+                .addOnFailureListener(e ->
+                        Log.w(TAG, "[FCM] Failed to get FCM token: " + e.getMessage())
+                );
     }
 
     public void handleRegister(View view) {

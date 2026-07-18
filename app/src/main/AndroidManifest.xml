@@ -7,6 +7,8 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
     <uses-feature
         android:name="android.hardware.camera"
@@ -24,9 +26,14 @@
         <activity
             android:name=".ui.activities.ConfirmEmailActivity"
             android:exported="false" />
+
         <activity
             android:name=".ui.activities.IncomingCallActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:showOnLockScreen="true"
+            android:turnScreenOn="true"
+            tools:targetApi="27" />
+
         <activity
             android:name=".ui.activities.CallActivity"
             android:theme="@style/Theme.AppCompat.NoActionBar" />
@@ -45,10 +52,18 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".network.MyFirebaseService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
     </application>
 
 </manifest>
