@@ -118,6 +118,7 @@ public class LoginActivity extends AppCompatActivity {
                         TcpConnection.setCurrentUserId(user.getId());
                         TcpConnection.setCurrentUsername(user.getUsername());
                         TcpConnection.setCurrentEmail(user.getEmail());
+                        TcpConnection.setCurrentProfilePic(null);
 
                         SharedPreferences.Editor editor = preferences.edit();
                         if (keepSignedIn) {

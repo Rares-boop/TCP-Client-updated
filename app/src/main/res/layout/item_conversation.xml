@@ -22,8 +22,11 @@
         app:layout_constraintTop_toTopOf="parent">
 
         <ImageView
+            android:id="@+id/imgConversationAvatar"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
+            android:scaleType="centerCrop"
+            android:clipToOutline="true"
             android:padding="12dp"
             android:src="@android:drawable/sym_def_app_icon"
             app:tint="#94A3B8" />

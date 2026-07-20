@@ -11,6 +11,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.Spinner;
 import android.widget.Toast;
 
@@ -27,6 +28,7 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.google.firebase.messaging.FirebaseMessaging;
 import com.vladurares.tcpclient.network.GlobalPacketHandlers;
 import com.vladurares.tcpclient.network.PacketRouter;
+import com.vladurares.tcpclient.storage.ProfilePictureCache;
 import com.vladurares.tcpclient.utils.ClientKeyManager;
 import com.vladurares.tcpclient.utils.ConfigReader;
 import com.vladurares.tcpclient.ui.adapters.ConversationAdapter;
@@ -68,6 +70,8 @@ public class MainActivity extends AppCompatActivity {
     private final PacketRouter.PacketCallback onCreate = this::handleCreateBroadcast;
     private final PacketRouter.PacketCallback onRename = this::handleRenameBroadcast;
     private final PacketRouter.PacketCallback onDelete = this::handleDeleteBroadcast;
+    private final PacketRouter.PacketCallback onPartnerPics = this::handlePartnerPictures;
+    private final PacketRouter.PacketCallback onMyProfilePic = this::handleMyProfilePic;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -116,6 +120,7 @@ public class MainActivity extends AppCompatActivity {
                 this::handleLongChatClick
         );
         recyclerView.setAdapter(adapter);
+        ProfilePictureCache.loadFromDisk(this);
 
         findViewById(R.id.btnProfile).setOnClickListener(v -> {
             Intent profileIntent = new Intent(this, ProfileActivity.class);
@@ -124,6 +129,11 @@ public class MainActivity extends AppCompatActivity {
             profileIntent.putExtra("USER_ID", TcpConnection.getCurrentUserId());
             startActivity(profileIntent);
         });
+
+        String myPic = TcpConnection.getCurrentProfilePic();
+        if (myPic != null && !myPic.isEmpty()) {
+            showHeaderAvatar(myPic);
+        }
 
         getOnBackPressedDispatcher().addCallback(this, new androidx.activity.OnBackPressedCallback(true) {
             @Override
@@ -159,6 +169,8 @@ public class MainActivity extends AppCompatActivity {
         r.on(PacketType.CREATE_CHAT_BROADCAST, onCreate);
         r.on(PacketType.RENAME_CHAT_BROADCAST, onRename);
         r.on(PacketType.DELETE_CHAT_BROADCAST, onDelete);
+        r.on(PacketType.GET_PARTNERS_PICTURES_RESPONSE, onPartnerPics);
+        r.on(PacketType.GET_PROFILE_PICTURE_RESPONSE, onMyProfilePic);
 
         Socket socket = TcpConnection.socket;
         if (socket == null || socket.isClosed() || !socket.isConnected()) {
@@ -166,6 +178,12 @@ public class MainActivity extends AppCompatActivity {
         } else {
             refreshConversations();
         }
+
+        String myPic = TcpConnection.getCurrentProfilePic();
+        if (myPic != null && !myPic.isEmpty()) {
+            showHeaderAvatar(myPic);
+        }
+
     }
 
     @Override
@@ -179,6 +197,8 @@ public class MainActivity extends AppCompatActivity {
         r.off(PacketType.CREATE_CHAT_BROADCAST, onCreate);
         r.off(PacketType.RENAME_CHAT_BROADCAST, onRename);
         r.off(PacketType.DELETE_CHAT_BROADCAST, onDelete);
+        r.off(PacketType.GET_PARTNERS_PICTURES_RESPONSE, onPartnerPics);
+        r.off(PacketType.GET_PROFILE_PICTURE_RESPONSE, onMyProfilePic);
     }
 
     @Override
@@ -204,6 +224,24 @@ public class MainActivity extends AppCompatActivity {
                 LocalStorage.setCurrentUserGroupChats(groupChats);
                 adapter.setGroupChats(groupChats);
                 adapter.notifyDataSetChanged();
+
+                List<Integer> chatIds = new ArrayList<>();
+                for (GroupChat chat : groupChats) {
+                    chatIds.add(chat.getId());
+                }
+                if (!chatIds.isEmpty()) {
+                    TcpConnection.sendPacket(new NetworkPacket(
+                            PacketType.GET_PARTNERS_PICTURES_REQUEST,
+                            TcpConnection.getCurrentUserId(),
+                            chatIds
+                    ));
+                }
+
+                TcpConnection.sendPacket(new NetworkPacket(
+                        PacketType.GET_PROFILE_PICTURE_REQUEST,
+                        TcpConnection.getCurrentUserId(),
+                        TcpConnection.getCurrentUserId()
+                ));
 
                 int openChatId = getIntent().getIntExtra("OPEN_CHAT_ID", -1);
                 if (openChatId > 0) {
@@ -322,6 +360,10 @@ public class MainActivity extends AppCompatActivity {
                 LocalStorage.setCurrentUserGroupChats(new ArrayList<>());
                 SharedPreferences prefs = SecureStorage.getEncryptedPrefs(MainActivity.this);
                 prefs.edit().clear().apply();
+
+                ProfilePictureCache.clear(MainActivity.this);
+                TcpConnection.setCurrentProfilePic(null);
+
                 goToLogin();
             });
         }, 300);
@@ -518,6 +560,57 @@ public class MainActivity extends AppCompatActivity {
     protected void onNewIntent(@NonNull Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+    }
+
+    @SuppressLint("NotifyDataSetChanged")
+    private void handlePartnerPictures(NetworkPacket packet) {
+        runOnUiThread(() -> {
+            try {
+                java.lang.reflect.Type mapType = new com.google.gson.reflect.TypeToken<java.util.Map<String, String>>(){}.getType();
+                java.util.Map<String, String> raw = new com.google.gson.Gson().fromJson(packet.getPayload(), mapType);
+
+                java.util.Map<Integer, String> parsed = new java.util.HashMap<>();
+                for (java.util.Map.Entry<String, String> e : raw.entrySet()) {
+                    parsed.put(Integer.parseInt(e.getKey()), e.getValue());
+                }
+
+                ProfilePictureCache.updateFromServer(this, parsed);
+                adapter.notifyDataSetChanged();
+
+                Log.i(TAG, "[CACHE] Updated " + parsed.size() + " partner profile pics.");
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to parse partner pictures", e);
+            }
+        });
+    }
+
+    private void showHeaderAvatar(String base64) {
+        try {
+            ImageView img = findViewById(R.id.imgHeaderAvatar);
+            byte[] bytes = android.util.Base64.decode(base64, android.util.Base64.NO_WRAP);
+            android.graphics.Bitmap bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+            if (bmp != null) {
+                img.setImageBitmap(bmp);
+                img.setPadding(0, 0, 0, 0);
+                img.setImageTintList(null);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to show header avatar", e);
+        }
+    }
+
+    private void handleMyProfilePic(NetworkPacket packet) {
+        runOnUiThread(() -> {
+            try {
+                String base64 = gson.fromJson(packet.getPayload(), String.class);
+                if (base64 != null && !base64.isEmpty()) {
+                    TcpConnection.setCurrentProfilePic(base64);
+                    showHeaderAvatar(base64);
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to load own profile pic", e);
+            }
+        });
     }
 
     private void sendFcmTokenAfterReconnect(int userId) {

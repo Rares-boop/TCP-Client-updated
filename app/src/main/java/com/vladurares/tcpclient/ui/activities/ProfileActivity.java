@@ -24,7 +24,6 @@ import com.vladurares.tcpclient.storage.SecureStorage;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
-import java.util.ArrayList;
 
 import chat.network.NetworkPacket;
 import chat.network.PacketType;
@@ -212,6 +211,7 @@ public class ProfileActivity extends AppCompatActivity {
                 imgProfilePic.setImageBitmap(bmp);
                 imgProfilePic.setPadding(0, 0, 0, 0);
                 imgProfilePic.setImageTintList(null);
+                TcpConnection.setCurrentProfilePic(base64);
             }
         } catch (Exception e) {
             Log.e(TAG, "Failed to decode profile pic", e);

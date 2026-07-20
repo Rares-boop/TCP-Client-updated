@@ -1,15 +1,18 @@
 package com.vladurares.tcpclient.ui.adapters;
 
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ImageView;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.vladurares.tcpclient.R;
+import com.vladurares.tcpclient.storage.ProfilePictureCache;
 
 import java.util.List;
 
@@ -57,6 +60,20 @@ public class ConversationAdapter extends RecyclerView.Adapter<ConversationAdapte
         holder.groupName.setText(chat.getName());
         holder.groupInfo.setText(String.format(java.util.Locale.getDefault(), "ID: %d", chat.getId()));
 
+        Bitmap partnerPic = ProfilePictureCache.getBitmap(chat.getId());
+        if (partnerPic != null) {
+            holder.avatar.setImageBitmap(partnerPic);
+            holder.avatar.setPadding(0, 0, 0, 0);
+            holder.avatar.setImageTintList(null);
+        } else {
+            // Reset la placeholder dacă nu e poză (recycle view reuse)
+            holder.avatar.setImageResource(android.R.drawable.sym_def_app_icon);
+            int pad = (int) (12 * context.getResources().getDisplayMetrics().density);
+            holder.avatar.setPadding(pad, pad, pad, pad);
+            holder.avatar.setImageTintList(
+                    android.content.res.ColorStateList.valueOf(0xFF94A3B8));
+        }
+
         holder.itemView.setOnClickListener(v -> {
             if (enabled) {
                 listener.onConversationClick(chat);
@@ -82,11 +99,13 @@ public class ConversationAdapter extends RecyclerView.Adapter<ConversationAdapte
 
     public static class ConversationViewHolder extends RecyclerView.ViewHolder {
         TextView groupName, groupInfo;
+        ImageView avatar;
 
         public ConversationViewHolder(@NonNull View itemView) {
             super(itemView);
             groupName = itemView.findViewById(R.id.textViewGroupName);
             groupInfo = itemView.findViewById(R.id.textViewGroupInfo);
+            avatar = itemView.findViewById(R.id.imgConversationAvatar);
         }
     }
 }

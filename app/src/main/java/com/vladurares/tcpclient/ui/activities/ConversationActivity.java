@@ -2,12 +2,14 @@ package com.vladurares.tcpclient.ui.activities;
 
 import android.annotation.SuppressLint;
 import android.content.Intent;
+import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -23,6 +25,7 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.vladurares.tcpclient.network.PacketRouter;
 import com.vladurares.tcpclient.storage.LocalStorage;
+import com.vladurares.tcpclient.storage.ProfilePictureCache;
 import com.vladurares.tcpclient.utils.ClientKeyManager;
 import com.vladurares.tcpclient.utils.ConfigReader;
 import com.vladurares.tcpclient.ui.adapters.MessageAdapter;
@@ -101,6 +104,14 @@ public class ConversationActivity extends AppCompatActivity {
 
         TextView txtChatName = findViewById(R.id.txtChatName);
         if(chatName != null) txtChatName.setText(chatName);
+
+        Bitmap partnerPic = ProfilePictureCache.getBitmap(currentChatId);
+        if (partnerPic != null) {
+            ImageView avatar = findViewById(R.id.imgHeaderAvatar);
+            avatar.setImageBitmap(partnerPic);
+            avatar.setPadding(0, 0, 0, 0);
+            avatar.setImageTintList(null);
+        }
 
         recyclerView = findViewById(R.id.recyclerViewMessages);
         messageAdapter = new MessageAdapter(this, messages, TcpConnection.getCurrentUserId(), this::handleLongMessageClick);
