@@ -117,6 +117,14 @@ public class MainActivity extends AppCompatActivity {
         );
         recyclerView.setAdapter(adapter);
 
+        findViewById(R.id.btnProfile).setOnClickListener(v -> {
+            Intent profileIntent = new Intent(this, ProfileActivity.class);
+            profileIntent.putExtra("USERNAME", TcpConnection.getCurrentUsername());
+            profileIntent.putExtra("EMAIL", TcpConnection.getCurrentEmail());
+            profileIntent.putExtra("USER_ID", TcpConnection.getCurrentUserId());
+            startActivity(profileIntent);
+        });
+
         getOnBackPressedDispatcher().addCallback(this, new androidx.activity.OnBackPressedCallback(true) {
             @Override
             public void handleOnBackPressed() {
@@ -484,6 +492,8 @@ public class MainActivity extends AppCompatActivity {
                     User user = gson.fromJson(resp.getPayload(), User.class);
                     if (user != null) {
                         TcpConnection.setCurrentUserId(user.getId());
+                        TcpConnection.setCurrentUsername(user.getUsername());
+                        TcpConnection.setCurrentEmail(user.getEmail());
                         runOnUiThread(() -> {
                             Toast.makeText(this, "Auto-reconnected!", Toast.LENGTH_SHORT).show();
 

@@ -33,6 +33,8 @@ public class TcpConnection {
     private static Context appContext;
     private static final String TAG = "TcpConnection";
     private static final Object writeLock = new Object();
+    private static String currentUsername;
+    private static String currentEmail;
 
     public interface PacketListener {
         void onPacketReceived(NetworkPacket packet);
@@ -216,6 +218,12 @@ public class TcpConnection {
     public static int getCurrentUserId() {
         return currentUserId;
     }
+
+    public static String getCurrentUsername() { return currentUsername; }
+    public static void setCurrentUsername(String u) { currentUsername = u; }
+    public static String getCurrentEmail() { return currentEmail; }
+    public static void setCurrentEmail(String e) { currentEmail = e; }
+
     public static java.net.Socket getSocket() {
         return socket;
     }

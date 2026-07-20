@@ -116,6 +116,8 @@ public class LoginActivity extends AppCompatActivity {
                     if (payload.isJsonObject()) {
                         User user = gson.fromJson(payload, User.class);
                         TcpConnection.setCurrentUserId(user.getId());
+                        TcpConnection.setCurrentUsername(user.getUsername());
+                        TcpConnection.setCurrentEmail(user.getEmail());
 
                         SharedPreferences.Editor editor = preferences.edit();
                         if (keepSignedIn) {

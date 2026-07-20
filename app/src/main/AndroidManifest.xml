@@ -35,6 +35,10 @@
             tools:targetApi="27" />
 
         <activity
+            android:name=".ui.activities.ProfileActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".ui.activities.CallActivity"
             android:theme="@style/Theme.AppCompat.NoActionBar" />
         <activity

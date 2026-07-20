@@ -65,6 +65,7 @@ dependencies {
     implementation(libs.firebase.messaging)
 
     coreLibraryDesugaring(libs.desugar.jdk.libs)
+    implementation(libs.exifinterface)
 
     implementation(libs.camera.core)
     implementation(libs.camera.camera2)
