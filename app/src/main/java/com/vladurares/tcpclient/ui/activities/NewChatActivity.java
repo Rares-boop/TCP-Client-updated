@@ -2,6 +2,7 @@ package com.vladurares.tcpclient.ui.activities;
 
 import android.os.Bundle;
 import android.util.Log;
+import android.widget.EditText;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
@@ -43,6 +44,28 @@ public class NewChatActivity extends AppCompatActivity {
         recyclerView.setLayoutManager(new LinearLayoutManager(this));
         userAdapter = new UserListAdapter(this, userNames, this::onUserSelected);
         recyclerView.setAdapter(userAdapter);
+
+        EditText searchBar = findViewById(R.id.searchUsers);
+        searchBar.addTextChangedListener(new android.text.TextWatcher() {
+            private final android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
+            private Runnable searchRunnable;
+
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            public void onTextChanged(CharSequence s, int start, int before, int count) {}
+
+            public void afterTextChanged(android.text.Editable s) {
+                if (searchRunnable != null) handler.removeCallbacks(searchRunnable);
+                searchRunnable = () -> {
+                    String query = s.toString().trim();
+                    TcpConnection.sendPacket(new NetworkPacket(
+                            PacketType.GET_USERS_REQUEST,
+                            TcpConnection.getCurrentUserId(),
+                            query.isEmpty() ? null : query
+                    ));
+                };
+                handler.postDelayed(searchRunnable, 500);
+            }
+        });
 
         TcpConnection.sendPacket(new NetworkPacket(
                 PacketType.GET_USERS_REQUEST,
