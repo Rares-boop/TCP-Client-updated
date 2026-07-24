@@ -127,6 +127,10 @@ public class RegisterActivity extends AppCompatActivity {
                 showSnackbar("Un cont cu acest email există deja.");
                 break;
 
+            case "USERNAME_TAKEN":
+                showSnackbar("Username already taken. Choose another.");
+                break;
+
             case "FAIL":
                 showSnackbar("Eroare la înregistrare. Încearcă din nou.");
                 break;
