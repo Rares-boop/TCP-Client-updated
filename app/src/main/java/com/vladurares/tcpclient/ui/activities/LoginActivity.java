@@ -54,6 +54,10 @@ public class LoginActivity extends AppCompatActivity {
             return insets;
         });
 
+        findViewById(R.id.txtForgotPassword).setOnClickListener(v -> {
+            startActivity(new Intent(this, ForgotPasswordActivity.class));
+        });
+
         config = new ConfigReader(this);
 
         try {

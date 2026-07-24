@@ -121,6 +121,19 @@
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toBottomOf="@id/passwordLayout" />
 
+        <TextView
+            android:id="@+id/txtForgotPassword"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Forgot password?"
+            android:textColor="#137fec"
+            android:textSize="14sp"
+            android:clickable="true"
+            android:focusable="true"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="@id/checkBoxKeepSignedIn"
+            app:layout_constraintBottom_toBottomOf="@id/checkBoxKeepSignedIn" />
+
         <Button
             android:id="@+id/button"
             android:layout_width="match_parent"
