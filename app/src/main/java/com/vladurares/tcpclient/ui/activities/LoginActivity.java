@@ -144,7 +144,7 @@ public class LoginActivity extends AppCompatActivity {
                         TcpConnection.close();
 
                         if ("NOT_CONFIRMED".equals(error)) {
-                            showSnackbar("Account not confirmed. Check your email.");
+                            startActivity(new Intent(LoginActivity.this, ConfirmEmailActivity.class));
                         } else if ("RATE_LIMITED".equals(error)) {
                             showSnackbar("Too many attempts. Try again in 15 minutes.");
                         } else {
