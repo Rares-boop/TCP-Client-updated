@@ -38,6 +38,9 @@
             android:name=".ui.activities.ProfileActivity"
             android:exported="false" />
 
+        <activity android:name=".ui.activities.NewChatActivity" android:exported="false" />
+        <activity android:name=".ui.activities.PendingInvitesActivity" android:exported="false" />
+
         <activity
             android:name=".ui.activities.CallActivity"
             android:theme="@style/Theme.AppCompat.NoActionBar" />

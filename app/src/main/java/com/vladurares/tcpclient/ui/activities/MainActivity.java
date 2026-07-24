@@ -7,12 +7,10 @@ import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
-import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.EditText;
 import android.widget.ImageView;
-import android.widget.Spinner;
 import android.widget.Toast;
 
 import androidx.activity.EdgeToEdge;
@@ -43,6 +41,7 @@ import java.lang.reflect.Type;
 import java.net.Socket;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import javax.crypto.SecretKey;
 
@@ -51,7 +50,6 @@ import chat.models.User;
 import chat.network.ChatDtos;
 import chat.network.NetworkPacket;
 import chat.network.PacketType;
-import crypto.api.CryptoHelper;
 
 
 public class MainActivity extends AppCompatActivity {
@@ -59,19 +57,15 @@ public class MainActivity extends AppCompatActivity {
     ConversationAdapter adapter;
     private final Gson gson = new Gson();
     AlertDialog dialog;
-    private Spinner pendingSpinner;
-    private List<String> pendingRawUsers;
-    private int pendingChatTargetId = -1;
-    private String pendingChatName = null;
     private static final String TAG = "MainActivity";
     private final PacketRouter.PacketCallback onChats = this::handleGetChats;
-    private final PacketRouter.PacketCallback onUsers = this::handleGetUsers;
-    private final PacketRouter.PacketCallback onBundle = this::handleBundleResponse;
     private final PacketRouter.PacketCallback onCreate = this::handleCreateBroadcast;
     private final PacketRouter.PacketCallback onRename = this::handleRenameBroadcast;
     private final PacketRouter.PacketCallback onDelete = this::handleDeleteBroadcast;
     private final PacketRouter.PacketCallback onPartnerPics = this::handlePartnerPictures;
     private final PacketRouter.PacketCallback onMyProfilePic = this::handleMyProfilePic;
+    private final PacketRouter.PacketCallback onInviteReceived = this::handleInviteReceived;
+    private final PacketRouter.PacketCallback onPendingCount = this::handlePendingCount;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -130,6 +124,10 @@ public class MainActivity extends AppCompatActivity {
             startActivity(profileIntent);
         });
 
+        findViewById(R.id.btnInvites).setOnClickListener(v -> {
+            startActivity(new Intent(this, PendingInvitesActivity.class));
+        });
+
         String myPic = TcpConnection.getCurrentProfilePic();
         if (myPic != null && !myPic.isEmpty()) {
             showHeaderAvatar(myPic);
@@ -159,18 +157,15 @@ public class MainActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
 
-        pendingSpinner = null;
-        pendingRawUsers = null;
-
         PacketRouter r = PacketRouter.getInstance();
         r.on(PacketType.GET_CHATS_RESPONSE, onChats);
-        r.on(PacketType.GET_USERS_RESPONSE, onUsers);
-        r.on(PacketType.GET_BUNDLE_RESPONSE, onBundle);
         r.on(PacketType.CREATE_CHAT_BROADCAST, onCreate);
         r.on(PacketType.RENAME_CHAT_BROADCAST, onRename);
         r.on(PacketType.DELETE_CHAT_BROADCAST, onDelete);
         r.on(PacketType.GET_PARTNERS_PICTURES_RESPONSE, onPartnerPics);
         r.on(PacketType.GET_PROFILE_PICTURE_RESPONSE, onMyProfilePic);
+        r.on(PacketType.CHAT_INVITE_RECEIVED, onInviteReceived);
+        r.on(PacketType.GET_PENDING_INVITES_RESPONSE, onPendingCount);
 
         Socket socket = TcpConnection.socket;
         if (socket == null || socket.isClosed() || !socket.isConnected()) {
@@ -192,13 +187,13 @@ public class MainActivity extends AppCompatActivity {
 
         PacketRouter r = PacketRouter.getInstance();
         r.off(PacketType.GET_CHATS_RESPONSE, onChats);
-        r.off(PacketType.GET_USERS_RESPONSE, onUsers);
-        r.off(PacketType.GET_BUNDLE_RESPONSE, onBundle);
         r.off(PacketType.CREATE_CHAT_BROADCAST, onCreate);
         r.off(PacketType.RENAME_CHAT_BROADCAST, onRename);
         r.off(PacketType.DELETE_CHAT_BROADCAST, onDelete);
         r.off(PacketType.GET_PARTNERS_PICTURES_RESPONSE, onPartnerPics);
         r.off(PacketType.GET_PROFILE_PICTURE_RESPONSE, onMyProfilePic);
+        r.off(PacketType.CHAT_INVITE_RECEIVED, onInviteReceived);
+        r.off(PacketType.GET_PENDING_INVITES_RESPONSE, onPendingCount);
     }
 
     @Override
@@ -243,6 +238,12 @@ public class MainActivity extends AppCompatActivity {
                         TcpConnection.getCurrentUserId()
                 ));
 
+                TcpConnection.sendPacket(new NetworkPacket(
+                        PacketType.GET_PENDING_INVITES_REQUEST,
+                        TcpConnection.getCurrentUserId(),
+                        TcpConnection.getCurrentUserId()
+                ));
+
                 int openChatId = getIntent().getIntExtra("OPEN_CHAT_ID", -1);
                 if (openChatId > 0) {
                     getIntent().removeExtra("OPEN_CHAT_ID");
@@ -256,51 +257,6 @@ public class MainActivity extends AppCompatActivity {
 
             } catch (Exception e) {
                 Log.e(TAG, "Failed to parse chat list from server.", e);
-            }
-        });
-    }
-
-    private void handleGetUsers(NetworkPacket packet) {
-        runOnUiThread(() -> {
-            try {
-                Type userListType = new TypeToken<List<String>>(){}.getType();
-                List<String> serverList = gson.fromJson(packet.getPayload(), userListType);
-                updateSpinnerData(serverList);
-            } catch (Exception e) {
-                Log.e(TAG, "Failed to parse users list.", e);
-            }
-        });
-    }
-
-    private void handleBundleResponse(NetworkPacket packet) {
-        runOnUiThread(() -> {
-            try {
-                ChatDtos.GetBundleResponseDto bundle = gson.fromJson(packet.getPayload(), ChatDtos.GetBundleResponseDto.class);
-                if (bundle.targetUserId != pendingChatTargetId) return;
-
-                java.security.PublicKey bobIdentityKey = CryptoHelper.stringToDilithiumPublic(bundle.identityKeyPublic);
-                java.security.PublicKey bobPreKey = CryptoHelper.stringToKyberPublic(bundle.signedPreKeyPublic);
-                byte[] bobSignature = android.util.Base64.decode(bundle.signature, android.util.Base64.NO_WRAP);
-
-                boolean isSigValid = CryptoHelper.verifySignature(bobIdentityKey, bobPreKey.getEncoded(), bobSignature);
-                if (!isSigValid) {
-                    Toast.makeText(this, "SECURITY ALERT: Invalid signature!", Toast.LENGTH_LONG).show();
-                    Log.e(TAG, "SECURITY ALERT: Dilithium signature validation failed for target ID: " + pendingChatTargetId);
-                    return;
-                }
-
-                CryptoHelper.KEMResult kemResult = CryptoHelper.encapsulate(bobPreKey);
-                String ciphertextBase64 = android.util.Base64.encodeToString(kemResult.wrappedKey, android.util.Base64.NO_WRAP);
-
-                LocalStorage.pendingSecretKey = android.util.Base64.encodeToString(kemResult.aesKey.getEncoded(), android.util.Base64.NO_WRAP);
-
-                ChatDtos.CreateGroupDto createDto = new ChatDtos.CreateGroupDto(pendingChatTargetId, pendingChatName, ciphertextBase64);
-                NetworkPacket createReq = new NetworkPacket(PacketType.CREATE_CHAT_REQUEST, TcpConnection.getCurrentUserId(), createDto);
-                TcpConnection.sendPacket(createReq);
-
-            } catch (Exception e) {
-                Log.e(TAG, "Critical Crypto error while processing Post-Quantum bundle.", e);
-                Toast.makeText(this, "Crypto Error: " + e.getMessage(), Toast.LENGTH_SHORT).show();
             }
         });
     }
@@ -369,26 +325,6 @@ public class MainActivity extends AppCompatActivity {
         }, 300);
     }
 
-    private void loadUsersForSpinner(Spinner spinner, List<String> rawUserStrings) {
-        this.pendingSpinner = spinner;
-        this.pendingRawUsers = rawUserStrings;
-        NetworkPacket req = new NetworkPacket(PacketType.GET_USERS_REQUEST, TcpConnection.getCurrentUserId());
-        TcpConnection.sendPacket(req);
-    }
-
-    private void updateSpinnerData(List<String> serverList) {
-        if (pendingSpinner == null || pendingRawUsers == null) return;
-        pendingRawUsers.clear();
-        pendingRawUsers.addAll(serverList);
-        List<String> displayNames = new ArrayList<>();
-        for (String s : serverList) {
-            String[] parts = s.split(",");
-            if (parts.length > 1) displayNames.add(parts[1]);
-            else displayNames.add(s);
-        }
-        setupSpinner(pendingSpinner, displayNames.toArray(new String[0]));
-    }
-
     public void handleChatClick(GroupChat chat) {
         ClientKeyManager keyMgr = new ClientKeyManager(this, TcpConnection.getCurrentUserId());
         SecretKey key = keyMgr.getKey(chat.getId());
@@ -441,59 +377,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     public void handleAddConversation(View view) {
-        adapter.setEnabled(false);
-        LayoutInflater inflater = getLayoutInflater();
-        View dialogView = inflater.inflate(R.layout.dialog_with_spinner, null);
-        EditText editGroupName = dialogView.findViewById(R.id.editGroupName);
-        Spinner spinner = dialogView.findViewById(R.id.mySpinner);
-        editGroupName.setTextColor(Color.WHITE);
-        editGroupName.setHintTextColor(Color.LTGRAY);
-        setupSpinner(spinner, new String[]{"Loading...", "Please wait"});
-        List<String> rawUserStrings = new ArrayList<>();
-
-        dialog = new AlertDialog.Builder(MainActivity.this, R.style.DialogSmecher)
-                .setTitle("Add a new conversation")
-                .setView(dialogView)
-                .setNegativeButton("Cancel", (d, w) -> { adapter.setEnabled(true); d.cancel(); })
-                .setPositiveButton("OK", (d, w) -> {
-                    String groupName = editGroupName.getText().toString().trim();
-                    if (groupName.isEmpty()) { Toast.makeText(this, "Enter a group name!", Toast.LENGTH_SHORT).show(); adapter.setEnabled(true); return; }
-                    int index = spinner.getSelectedItemPosition();
-                    if (index < 0 || index >= rawUserStrings.size()) { Toast.makeText(this, "No user selected!", Toast.LENGTH_SHORT).show(); adapter.setEnabled(true); return; }
-                    String selectedRaw = rawUserStrings.get(index);
-                    int targetId = Integer.parseInt(selectedRaw.split(",")[0]);
-                    this.pendingChatTargetId = targetId;
-                    this.pendingChatName = groupName;
-
-                    Toast.makeText(this, "Handshake: Requesting keys...", Toast.LENGTH_SHORT).show();
-                    NetworkPacket bundleReq = new NetworkPacket(PacketType.GET_BUNDLE_REQUEST,
-                            TcpConnection.getCurrentUserId(),
-                            new ChatDtos.GetBundleRequestDto(targetId));
-                    TcpConnection.sendPacket(bundleReq);
-                }).create();
-        dialog.setCancelable(false);
-        dialog.setCanceledOnTouchOutside(false);
-        dialog.show();
-        loadUsersForSpinner(spinner, rawUserStrings);
-    }
-
-    private void setupSpinner(Spinner spinner, String[] items) {
-        ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, items) {
-            @NonNull
-            @Override public View getView(int position, View convertView, @NonNull android.view.ViewGroup parent) {
-                android.widget.TextView view = (android.widget.TextView) super.getView(position, convertView, parent);
-                view.setTextColor(Color.WHITE);
-                return view;
-            }
-            @Override public View getDropDownView(int position, View convertView, @NonNull android.view.ViewGroup parent) {
-                android.widget.TextView view = (android.widget.TextView) super.getDropDownView(position, convertView, parent);
-                view.setTextColor(Color.WHITE);
-                view.setBackgroundColor(Color.parseColor("#1c2630"));
-                return view;
-            }
-        };
-        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        spinner.setAdapter(adapter);
+        startActivity(new Intent(this, NewChatActivity.class));
     }
 
     public void handleLogout() {
@@ -609,6 +493,27 @@ public class MainActivity extends AppCompatActivity {
                 }
             } catch (Exception e) {
                 Log.e(TAG, "Failed to load own profile pic", e);
+            }
+        });
+    }
+
+    private void handleInviteReceived(NetworkPacket packet) {
+        runOnUiThread(() -> {
+            View badge = findViewById(R.id.badgeInvites);
+            badge.setVisibility(View.VISIBLE);
+            Toast.makeText(this, "New chat invite!", Toast.LENGTH_SHORT).show();
+        });
+    }
+
+    private void handlePendingCount(NetworkPacket packet) {
+        runOnUiThread(() -> {
+            try {
+                Type listType = new TypeToken<List<Map<String, Object>>>(){}.getType();
+                List<Map<String, Object>> invites = gson.fromJson(packet.getPayload(), listType);
+                View badge = findViewById(R.id.badgeInvites);
+                badge.setVisibility(invites.isEmpty() ? View.GONE : View.VISIBLE);
+            } catch (Exception e) {
+                Log.e(TAG, "Error checking pending invites", e);
             }
         });
     }
